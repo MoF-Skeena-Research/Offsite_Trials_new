@@ -3,7 +3,7 @@
 .Rapp.history
 /data/
 /spatial_files/
-/RESULTS/raw/
+/RESULTS_raw/
 # Session Data files
 .RData
 
