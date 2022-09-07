@@ -1,0 +1,108 @@
+---
+title: "Off-site Trial Graphics"
+author: "Will MacKenzie"
+date: "2022-09-03"
+output: html_document
+---
+Distribution of offsite species trials by BGC and climate space
+
+Plot on map
+Count by BGC
+Count by time period (>30, 20-30, 10-19, 6-10)
+Plot trials by DD5 by CMD.adjust
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(tidyverse)
+library(readr)
+require(tictoc)
+require(DataExplorer)
+
+## the first data.frame is the template
+trials.merge <-  function(df1, df2) {
+  trial.data.cols <- colnames(df1)
+Missing <- setdiff(trial.data.cols, names(df2))
+df2 <- as.data.frame(df2)
+df2 [Missing] <- NA # Add columns, filled with 'NA's
+df2 <- df2[trial.data.cols]  
+df <- rbind(df1, df2)
+df
+}
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r import tables exported from ACCESS data set}
+offsite_spp <- c("FDI", "FDC", "LW", "PY", "PW", "CW","BA", "BG", "PA", "YC", "BN", "BP", "LS", "FD")
+offsite.trials <- fread("./clean_data/Combined_Offsite_Trial_Info.csv") %>% filter(Latitude > 52)
+offsite.planting <- fread("./clean_data/Combined_Offsite_Planting_Info.csv") %>% mutate(SppVar = toupper(SppVar)) %>% filter(SppVar %in% offsite_spp)
+```
+
+```{r update BGCv12}
+offsite.trials.all <- fread("./clean_data/Combined_Offsite_Trial_Info.csv") %>% st_as_sf()
+bgc <- vect("./spatial_files/BC_BGCv12_Published_Fixed_2.gpkg")
+
+
+```
+
+```{r create climate set}
+Offsite.bybec <- left_join(offsite.trials, offsite.planting) %>% droplevels()
+tooyoung <- Offsite.bybec %>% filter(PlantingYear > 2016) %>% select(Trial_ID)
+Offsite.for.climatebc <-  Offsite.bybec %>% select(Trial_ID, SppVar, Latitude, Longitude, Elevation) %>% rename(ID1 = 1, ID2 = 2, lat = 3, long = 4, el  =5)
+fwrite(Offsite.for.climatebc, "./clean_data/Offsite_for_ClimateBC.csv")
+Offsite.climate <- fread("./clean_data/Offsite_for_ClimateBC_Normal_1971_2000S.csv") %>% filter(!DD5 == -9999)%>% filter(!is.na(ID2), !ID2 == "")
+Offsite.climate.test <- Offsite.climate %>% select(ID2, DD5, CMD, Tmin_sp, bFFP) 
+# Top 10 coldest trials by spp for priority sampling
+Offsite.climate.coldest <- Offsite.climate  %>%  select(ID1, ID2, Latitude, Longitude, Elevation, DD5, CMD, Tmin_sp, bFFP) %>% 
+  rename(Trial_ID = ID1, SppVar = ID2) %>%  anti_join(tooyoung) %>% arrange(desc(bFFP)) %>% 
+  group_by(SppVar) %>%
+  slice(1:10) %>% distinct
+fwrite(Offsite.climate.coldest, "./clean_data/coldest_offsitetrials_by_spp.csv")
+#DataExplorer::create_report(Offsite.climate.test, y = "ID2")
+```
+
+```{r add in tree occurrence from across the range}
+
+#setwd("D:/GitHub/TreeSuitabilityPrediction/")
+trees = c("PSEUMEN", 'THUJPLI', 'ABIEGRA', 'ABIEAMA', 'LARIOCC', 'PINUALB', 'PINUMON', 'PINUPON', 'XANTNOO', 'ABIEPRO')
+codes =c("FDx", "CWx", "BGx","BAx", "LWx", "PAx", "PWx", "PYx", "YCx", "BPx")
+map = setNames(codes, trees)
+
+us_veg <- fread("D:/GitHub/TreeSuitabilityPrediction/InputData/AllUSandFIA16Apr2020_Veg.csv") %>% filter(Species %in% trees) %>% select(PlotNumber, Species)
+us_env <- fread("D:/GitHub/TreeSuitabilityPrediction/InputData/AllUSandFIA16Apr2020_Env.csv") %>% select(PlotNumber, Latitude, Longitude, Elevation)
+us.dat <- left_join(us_veg, us_env) %>% select(PlotNumber, Species, everything()) %>% rename(ID1 = 1, ID2= 2, lat = 3, long = 4, el = 5)
+
+load("D:/GitHub/TreeSuitabilityPrediction/InputData/VegDat_Clean.RData") 
+bc.veg <- vegData %>% select(PlotNumber, Species) %>% mutate(Species = as.character(Species)) %>% dplyr::filter(Species %in% trees)
+bc.env <- fread("D:/GitHub/TreeSuitabilityPrediction/InputData/BECMaster19_Env.csv") %>% select(PlotNumber, Latitude, Longitude, Elevation)
+bc.dat <- left_join(bc.veg, bc.env) %>% select(PlotNumber, Species, everything()) %>% rename(ID1 = 1, ID2= 2, lat = 3, long = 4, el = 5)
+all.dat <- rbind(us.dat, bc.dat)
+all.dat$ID2[] = map[all.dat$ID2]
+fwrite(all.dat, "./data/spprange_for_climatebc.csv")
+
+spp.range.climate <- fread("./data/spprange_for_climatebc_Normal_1971_2000SY.csv") %>% filter(!DD5 == -9999)
+spp.climate.test <- spp.range.climate %>% select(ID2, DD5, CMD, Tmin_sp, bFFP) %>% filter(!is.na(ID2), !ID2 == "")
+all.climate.test <- rbind(spp.climate.test, Offsite.climate.test) %>% arrange(ID2)
+DataExplorer::create_report(all.climate.test, y = "ID2")
+
+```
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

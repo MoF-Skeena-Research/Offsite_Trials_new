@@ -1,0 +1,70 @@
+---
+title: "Combine Offsite Data sets"
+author: "Will MacKenzie & Hardy Griesbauer"
+date: "2022-08-03"
+output: html_document
+---
+This script imports trial information from various sources to create a complete data set for use in the ByBECapp of offsite trials.
+
+The off-site trial data will be in 5 related tables.
+- trial_site table is the master table and gives location information for an opening or trial that locates the trial and gives general features of the opening. For RESULTS data this is pulled from the Silviculture tables
+- project_info is the metadata about the purpose and methods of a set of related trials
+- trial_planting is the information on each offsite species planting occurring in a trial along with the qualitative assessment fields. For RESULTS data this is pulled from the PLANTING tables
+
+The unique identifier tying these tables together is the Trial_ID. For RESULTS data this is the opening number.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(tidyverse)
+library(readr)
+require(tictoc)
+
+## the first data.frame is the template
+trials.merge <-  function(df1, df2) {
+  trial.data.cols <- colnames(df1)
+Missing <- setdiff(trial.data.cols, names(df2))
+df2 <- as.data.frame(df2)
+df2 [Missing] <- NA # Add columns, filled with 'NA's
+df2 <- df2[trial.data.cols]  
+df <- rbind(df1, df2)
+df
+}
+
+```
+
+```{r import tables exported from ACCESS data set}
+offsite_spp <- c("FDI", "FDC", "LW", "PY", "PW", "CW","BA", "BG", "PA", "YC", "BN", "BP", "LS", "FD")
+offsite.trials <- fread("./clean_data/Combined_Offsite_Trial_Info.csv") %>% filter(Latitude > 52)
+offsite.planting <- fread("./clean_data/Combined_Offsite_Planting_Info.csv") %>% mutate(SppVar = toupper(SppVar)) %>% filter(SppVar %in% offsite_spp)
+```
+
+```{r create Avenza data set}
+Offsite.bybec <- left_join(offsite.trials, offsite.planting) %>% droplevels() 
+
+Offsite.avenza <- Offsite.bybec %>%  unite( SppVar, PlantingYear, Trial_ID, col = 'Avenza_label', remove = FALSE) %>% 
+  mutate(QuanitativeCollected = NA, DamageandSeverity = NA, SMR_SNR = NA) %>% mutate_if(is.logical, as.character) %>% 
+  select(Avenza_label, Trial_Type,SppComposition_Label, SppVar, PlantingYear, Num_Planted,Latitude, Longitude, Elevation, Slope, Aspect, BGC, SS_NoSpace,SMR_SNR,  Assessor_Qual, Qual_Date, Qualitative_Vigour, Vigour_Variability, Best_Height_Offsite, DamageandSeverity, 
+         Survival_est, Local_Spp1, Best_Height_Local1, Local_Spp2, Best_Height_Local2,Local_Spp3, Best_Height_Local3, QuanitativeCollected) %>% mutate(Best_Height_Offsite = as.numeric(Best_Height_Offsite), Best_Height_Local1 = as.numeric(Best_Height_Local1), Best_Height_Local2 = as.numeric(Best_Height_Local2), Best_Height_Local3 = as.numeric(Best_Height_Local3), Survival_est = as.numeric(Survival_est )) %>% 
+  filter(Latitude > 52)
+Offsite.research <- Offsite.avenza %>% filter(Trial_Type == "Research")
+Offsite.avenza30 <- Offsite.avenza %>% filter(PlantingYear <1991, !Trial_Type == "Research")
+Offsite.avenza20 <- Offsite.avenza %>% filter(between(PlantingYear, 1991, 2002), !Trial_Type == "Research")
+Offsite.avenza10 <- Offsite.avenza %>% filter(between(PlantingYear, 2003, 2012), !Trial_Type == "Research")
+Offsite.avenza5 <- Offsite.avenza %>% filter(between(PlantingYear, 2013, 2017), !Trial_Type == "Research")
+Offsite.avenza0 <- Offsite.avenza %>% filter(between(PlantingYear, 2013, 2017), !Trial_Type == "Research")
+fwrite(Offsite.avenza, "./clean_data/All_Avenza_offsite.csv")
+fwrite(Offsite.research, "./clean_data/Avenza_offsite_research.csv")
+fwrite(Offsite.avenza30,"./clean_data/Avenza_offsite30.csv" )
+fwrite(Offsite.avenza20,"./clean_data/Avenza_offsite20.csv" )
+fwrite(Offsite.avenza10,"./clean_data/Avenza_offsite10.csv" )
+fwrite(Offsite.avenza5,"./clean_data/Avenza_offsite5.csv" )
+
+###---Bring avenza into Qgis and export as KML with avenza label as name and spp composition as description. To make it smaller used only points north of 52
+```
+
+
+
+```
+

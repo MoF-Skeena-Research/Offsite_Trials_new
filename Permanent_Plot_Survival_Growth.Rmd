@@ -1,0 +1,136 @@
+---
+title: "Import and analyse long-term plot data"
+author: "Will MacKenzie"
+date: "2022-08-03"
+output: html_document
+---
+The off-site trial data will be in 5 related tables.
+- trial_site table is the master table and gives location information for an opening or trial that locates the trial and gives general features of the opening. For RESULTS data this is pulled from the Silviculture tables
+- project_info is the metadata about the purpose and methods of a set of related trials
+- trial_planting is the information on each offsite species planting occurring in a trial along with the qualitative assessment fields. For RESULTS data this is pulled from the PLANTING tables
+- plot_site is for quantitative plots established in a trial
+- plot_trees is the measurements of individual trees in a plot
+
+The unique identifier tying these tables together is the Trial_ID. For RESULTS data this is the opening number.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(sf)
+require(data.table)
+require(tidyverse)
+require(terra)
+require(fasterize)
+library(readr)
+library(rmapshaper)
+require(tictoc)
+require(ggplot2)
+require(forcats)
+source("./_functions/doc_theme_pem.R")
+
+```
+
+```{r selected species and CFRG tables}
+
+spp.codes <- c("Fdi", "Fdc", "Lw", "Py", "Pw", "Cw","Ba", "Bg", "Pa", "Yc", "Bn", "Bp", "Ls", "Fd", "Pl", "Sn", "Bl", "Sx")
+old.codes <- c("Si", "Pp", "Bn")
+cfrg <- fread("./data/StockStands_v12_3.csv")
+cfrg.offsite <-
+  cfrg %>%
+  mutate(Spp=toupper(Species)) %>% rename(BGC = ZoneSubzone) %>% select(BGC,Spp,Suitability) %>%  filter(Suitability >0 & Suitability <4) %>% distinct() %>% group_by(BGC, Spp) %>% filter(Suitability == min(Suitability)) %>% data.frame %>% 
+  filter(!(Spp =='FD' & BGC == 'SBSdk'))
+bgc <- vect("./spatial_files/BC_BGCv12_Published_Fixed_2.gpkg")
+region <- vect("./spatial_files/Forest_Region_District.gpkg")
+bgc_region <- vect("./spatial_files/BGC_Region_District.gpkg")
+
+```
+
+```{r import spreadsheet data and export for SiteTools}
+###---------This creates list of Openings with species of interest
+file.name <- "./data/Bowser_EP0976_Data.csv"
+file.name <- "./data/Date_EP0976_Data.csv"
+file.name <- "./data/Stewart_EP0976_Data.csv"
+
+data <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht10, ht15, ht20, ht25, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, height == "999", "x")) %>% mutate(height = replace(height, height == "0", "x")) %>% mutate(height = str_replace(height, "x", "")) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sx", "Py", "Bp"))) %>% 
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"), height = as.numeric(height), age = str_replace(age, "ht", ""), age = as.numeric(age)) %>% mutate_if(is.character, as.factor) %>%  
+  mutate(height = height/100) 
+fwrite(data, "./data/Bowser_EP0976_Data_For_SiteTools.csv" )
+fwrite(data, "./data/Date_EP0976_Data_For_SiteTools.csv" )
+fwrite(data, "./data/Stewart_EP0976_Data_For_SiteTools.csv" )
+
+###________ Bring into Site Tools and return for next chunk
+
+
+```
+
+
+```{r SI data summary}
+data2 <- fread("./data/Bowser_EP0976_Data_SI.csv") %>% select(5) ## THIS IS THE GROWTH INTERCEPT VALUE
+data2 <- fread("./data/Date_EP0976_Data_SI.csv") %>% select(5)
+data2 <- fread("./data/Stewart_EP0976_Data_SI.csv") %>% select(5)
+
+data3 <- cbind(data, data2) %>% rename(SI50 = `Site Index (GI Disabled) m`)%>%
+  unite(spp,seedsource, col =  spp.pop) %>% mutate(spp.pop = as.factor(spp.pop), age = as.factor(age)) %>%
+  mutate(SI50 = replace(SI50, SI50 == 1.3, NA))## 1.3m is minimum SI from site tools - here treat as effectively moribund for data analysis
+data3$spp.pop <- factor(data3$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA', 'Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sx_Sx'))
+data3$spp.pop <- factor(data3$spp.pop , levels =rev(levels(data3$spp.pop)))
+
+data.bowser <- data3
+data.date <- data3 %>% mutate(site = "Date") %>% droplevels()
+data.stewart <- data3
+data.EP976 <- rbind(data.bowser, data.date, data.stewart)
+fwrite(data.EP976, "./clean_data/EP0976_Tree_SiteIndex.csv")
+```
+
+
+```{r SI data summary}
+data.EP976 <- fread( "./clean_data/EP0976_Tree_SiteIndex.csv")
+data.EP976$spp.pop <- factor(data.EP976$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA','Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sx_Sx'))
+data.EP976$spp.pop <- factor(data.EP976$spp.pop , levels =rev(levels(data.EP976$spp.pop)))
+# SI_box_allages <- ggplot(data.EP976, aes(x= spp.pop, y=SI50, fill=age))+
+#          geom_boxplot()+
+#   coord_flip()+
+#   #ylim(40)+
+#   facet_wrap(~site, ncol = 1)+
+#   theme_pem()
+# SI_box_allages
+data_30 <- data.EP976 %>% filter(age == "30")
+SI_box_30 <- ggplot(data_30, aes(x= spp.pop, y=SI50))+
+         geom_boxplot(fill = "grey70",notch = TRUE)+
+  coord_flip()+
+    facet_wrap(~site, ncol = 1)+
+  geom_hline(yintercept = c(15, 20, 25, 30),linetype="dashed", color = "grey10")+
+  theme_pem()
+SI_box_30
+
+data_sum <- data3 %>%  group_by(spp.pop, age) %>% summarize(planted = n(), survived = sum(!is.na(height)), si50 = mean(SI50, na.rm = TRUE)) %>% mutate(survival = survived/planted) 
+
+```
+
+```{r height through time}
+###when do trees die? track individuals height for those that have 0 height in any of the measurement years.
+data <- fread("./data/Stewart_EP0976_Data.csv") %>% select(site, rep, tree, `sp/zone`, ht3, ht6, ht10, ht15, ht20, ht25, H30) %>% rename(seedsource = `sp/zone`, ht30 = H30) %>%  
+ mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sx", "Py"))) %>% 
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd")) %>% 
+  unite(site, seedsource, rep, tree, col = "tree_id", remove = FALSE) %>% select(-rep, -tree, -seedsource, -spp, -site) %>% 
+  pivot_longer(cols = c(-tree_id), names_to = "age", values_to = "height") %>%  
+  mutate(height = replace(height, height == "999", "x")) %>% mutate(height = replace(height, height == "0", "x")) %>% mutate(height = str_replace(height, "x", ""))  %>% 
+mutate(height = as.numeric(height)) %>% 
+  mutate_if(is.character, as.factor) %>%  
+  mutate(height = height/100, height = replace_na(height,0)) 
+
+data.test <- data %>% #filter(seedsource == "Sx") %>% select(-site, -spp, -site, seedsource) %>% #  mutate(age = as.character(age))
+    group_by(age) %>%
+   mutate(row = row_number()) %>%
+  pivot_wider(names_from = age, values_from = height) %>% 
+    select(-row) %>% na_if(0) %>% filter_all(any_vars(is.na(.))) %>% 
+  pivot_longer(cols = -tree_id, names_to = "age", values_to = "height") %>%  mutate(height = replace_na(height,0)) 
+
+###need to pivot_wider and then flag tree_id where any value is zero to keep these to clean up the ggplot
+data.test$age <- factor(data.test$age, levels = c("ht3", "ht6", "ht10", "ht15", "ht20", "ht25", "ht30"))
+
+ggplot(data.test, aes(x= age, y=height, group = tree_id))+
+         geom_path()
+
+```
+
