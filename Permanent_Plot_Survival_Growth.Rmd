@@ -32,7 +32,7 @@ source("./_functions/doc_theme_pem.R")
 
 ```{r selected species and CFRG tables}
 
-spp.codes <- c("Fdi", "Fdc", "Lw", "Py", "Pw", "Cw","Ba", "Bg", "Pa", "Yc", "Bn", "Bp", "Ls", "Fd", "Pl", "Sn", "Bl", "Sx")
+spp.codes <- c("Fdi", "Fdc", "Lw", "Py", "Pw", "Cw","Ba", "Bg", "Pa", "Yc", "Bn", "Bp", "Ls", "Fd", "Pl", "Sn", "Bl", "Sw")
 old.codes <- c("Si", "Pp", "Bn")
 cfrg <- fread("./data/StockStands_v12_3.csv")
 cfrg.offsite <-
@@ -48,14 +48,21 @@ bgc_region <- vect("./spatial_files/BGC_Region_District.gpkg")
 ```{r import spreadsheet data and export for SiteTools}
 ###---------This creates list of Openings with species of interest
 file.name <- "./data/Bowser_EP0976_Data.csv"
-file.name <- "./data/Date_EP0976_Data.csv"
-file.name <- "./data/Stewart_EP0976_Data.csv"
-
-data <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht10, ht15, ht20, ht25, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, height == "999", "x")) %>% mutate(height = replace(height, height == "0", "x")) %>% mutate(height = str_replace(height, "x", "")) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sx", "Py", "Bp"))) %>% 
-  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"), height = as.numeric(height), age = str_replace(age, "ht", ""), age = as.numeric(age)) %>% mutate_if(is.character, as.factor) %>%  
-  mutate(height = height/100) 
+data <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht10, ht15, ht20, ht25, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, height == "999", "x")) %>% mutate(height = replace(height, height == "0", "x")) %>% mutate(height = str_replace(height, "x", "")) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sw", "Py", "Bp"))) %>% 
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd") , height = as.numeric(height), age = str_replace(age, "ht", ""), age = as.numeric(age)) %>% mutate_if(is.character, as.factor) %>%  
+  mutate(height = height/100) %>% droplevels()# %>% rowid_to_column("ID")
 fwrite(data, "./data/Bowser_EP0976_Data_For_SiteTools.csv" )
+
+file.name <- "./data/Date_EP0976_Data.csv"
+data <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht10, ht15, ht20, ht25, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, height == "999", "x")) %>% mutate(height = replace(height, height == "0", "x")) %>% mutate(height = str_replace(height, "x", "")) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sw", "Py", "Bp"))) %>% 
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd") , height = as.numeric(height), age = str_replace(age, "ht", ""), age = as.numeric(age)) %>% mutate_if(is.character, as.factor) %>%  
+  mutate(height = height/100) %>% droplevels()# %>% rowid_to_column("ID")
 fwrite(data, "./data/Date_EP0976_Data_For_SiteTools.csv" )
+
+file.name <- "./data/Stewart_EP0976_Data.csv"
+data <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht10, ht15, ht20, ht25, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, height == "999", "x")) %>% mutate(height = replace(height, height == "0", "x")) %>% mutate(height = str_replace(height, "x", "")) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sw", "Py", "Bp"))) %>% 
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd") , height = as.numeric(height), age = str_replace(age, "ht", ""), age = as.numeric(age)) %>% mutate_if(is.character, as.factor) %>%  
+  mutate(height = height/100) %>% droplevels()# %>% rowid_to_column("ID")
 fwrite(data, "./data/Stewart_EP0976_Data_For_SiteTools.csv" )
 
 ###________ Bring into Site Tools and return for next chunk
@@ -65,35 +72,52 @@ fwrite(data, "./data/Stewart_EP0976_Data_For_SiteTools.csv" )
 
 
 ```{r SI data summary}
-data2 <- fread("./data/Bowser_EP0976_Data_SI.csv") %>% select(5) ## THIS IS THE GROWTH INTERCEPT VALUE
-data2 <- fread("./data/Date_EP0976_Data_SI.csv") %>% select(5)
-data2 <- fread("./data/Stewart_EP0976_Data_SI.csv") %>% select(5)
-
-data3 <- cbind(data, data2) %>% rename(SI50 = `Site Index (GI Disabled) m`)%>%
-  unite(spp,seedsource, col =  spp.pop) %>% mutate(spp.pop = as.factor(spp.pop), age = as.factor(age)) %>%
+data2 <- fread("./data/Bowser_EP0976_Data_SI.csv")# %>% select(5) ## THIS IS THE GROWTH INTERCEPT VALUE
+data3 <- data2 %>% rename(SI50 = `Site Index m`, age = `Total Age yrs`, ht = `Height m`) %>%
+  unite(Species, seedsource, col =  spp.pop) %>% mutate(spp.pop = as.factor(spp.pop), age = as.factor(age)) %>%
   mutate(SI50 = replace(SI50, SI50 == 1.3, NA))## 1.3m is minimum SI from site tools - here treat as effectively moribund for data analysis
-data3$spp.pop <- factor(data3$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA', 'Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sx_Sx'))
+data3$spp.pop <- factor(data3$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA', 'Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Bp_Bp', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sw_Sw'))
 data3$spp.pop <- factor(data3$spp.pop , levels =rev(levels(data3$spp.pop)))
-
 data.bowser <- data3
+
+data2 <- fread("./data/Date_EP0976_Data_SI.csv")# %>% select(5)
+data3 <- data2 %>% rename(SI50 = `Site Index m`, age = `Total Age yrs`, ht = `Height m`) %>%
+  unite(Species, seedsource, col =  spp.pop) %>% mutate(spp.pop = as.factor(spp.pop), age = as.factor(age)) %>%
+  mutate(SI50 = replace(SI50, SI50 == 1.3, NA))## 1.3m is minimum SI from site tools - here treat as effectively moribund for data analysis
+data3$spp.pop <- factor(data3$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA', 'Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Bp_Bp', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sw_Sw'))
+data3$spp.pop <- factor(data3$spp.pop , levels =rev(levels(data3$spp.pop)))
 data.date <- data3 %>% mutate(site = "Date") %>% droplevels()
+
+data2 <- fread("./data/Stewart_EP0976_Data_SI.csv")# %>% select(5)
+data3 <- data2 %>% rename(SI50 = `Site Index m`, age = `Total Age yrs`, ht = `Height m`) %>%
+  unite(Species, seedsource, col =  spp.pop) %>% mutate(spp.pop = as.factor(spp.pop), age = as.factor(age)) %>%
+  mutate(SI50 = replace(SI50, SI50 == 1.3, NA))## 1.3m is minimum SI from site tools - here treat as effectively moribund for data analysis
+data3$spp.pop <- factor(data3$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA', 'Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Bp_Bp', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sw_Sw'))
+data3$spp.pop <- factor(data3$spp.pop , levels =rev(levels(data3$spp.pop)))
 data.stewart <- data3
+
 data.EP976 <- rbind(data.bowser, data.date, data.stewart)
-fwrite(data.EP976, "./clean_data/EP0976_Tree_SiteIndex.csv")
+fwrite(data.EP976, "./outputs/EP0976_Tree_SiteIndex.csv")
 ```
 
 
 ```{r SI data summary}
-data.EP976 <- fread( "./clean_data/EP0976_Tree_SiteIndex.csv")
-data.EP976$spp.pop <- factor(data.EP976$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA','Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sx_Sx'))
+data.EP976 <- fread( "./outputs/EP0976_Tree_SiteIndex.csv")
+data.EP976$spp.pop <- factor(data.EP976$spp.pop , levels = c('Fd_CSTL','Fd_OPER', 'Fd_PROV','Fd_CP', 'Fd_MICA', 'Fd_MR','Fd_QL', 'Fd_SA','Fd_WKH', 'Fd_WKL', 'Bl_Bl', 'Bp_Bp','Lw_Lw', 'Pl_Pl', 'Pw_Pw', 'Py_Py', 'Sn_Sn', 'Sw_Sw'))
 data.EP976$spp.pop <- factor(data.EP976$spp.pop , levels =rev(levels(data.EP976$spp.pop)))
-# SI_box_allages <- ggplot(data.EP976, aes(x= spp.pop, y=SI50, fill=age))+
-#          geom_boxplot()+
-#   coord_flip()+
-#   #ylim(40)+
-#   facet_wrap(~site, ncol = 1)+
-#   theme_pem()
-# SI_box_allages
+data.EP976.site <- data.EP976 %>% filter(site == "BELL")
+SI_box_allages <- ggplot(data.EP976.site, aes(x= spp.pop, y=SI50, fill=as.factor(age))) +
+         geom_boxplot()+
+  coord_flip()+
+    geom_hline(yintercept = c(15, 20, 25, 30),linetype="dashed", color = "grey10")+
+  #ylim(40)+
+  facet_wrap(~site, ncol = 1)+
+  theme_pem_facet()
+SI_box_allages
+
+   finalise_facet_plot(SI_box_allages, "./outputs/BowserSI_timeperiods.png", width_pixels=480,
+                          height_pixels=480)
+   
 data_30 <- data.EP976 %>% filter(age == "30")
 SI_box_30 <- ggplot(data_30, aes(x= spp.pop, y=SI50))+
          geom_boxplot(fill = "grey70",notch = TRUE)+
@@ -109,7 +133,7 @@ data_sum <- data3 %>%  group_by(spp.pop, age) %>% summarize(planted = n(), survi
 
 ```{r height through time}
 ###when do trees die? track individuals height for those that have 0 height in any of the measurement years.
-data <- fread("./data/Stewart_EP0976_Data.csv") %>% select(site, rep, tree, `sp/zone`, ht3, ht6, ht10, ht15, ht20, ht25, H30) %>% rename(seedsource = `sp/zone`, ht30 = H30) %>%  
+data <- fread("./data/Stewart_EP0976_Data.csv") %>% select(site, rep, tree, `sp/zone`, ht3, ht6, ht10, ht15, ht20, ht25, ht30) %>% rename(seedsource = `sp/zone`) %>%  
  mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sx", "Py"))) %>% 
   mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd")) %>% 
   unite(site, seedsource, rep, tree, col = "tree_id", remove = FALSE) %>% select(-rep, -tree, -seedsource, -spp, -site) %>% 
