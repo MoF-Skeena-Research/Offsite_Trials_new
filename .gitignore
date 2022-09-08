@@ -4,6 +4,7 @@
 /data/
 /spatial_files/
 /RESULTS_raw/
+/outputs/
 # Session Data files
 .RData
 
