@@ -19,6 +19,8 @@ require(tidyverse)
 library(readr)
 require(tictoc)
 require(DataExplorer)
+require(sf)
+require(terra)
 
 ## the first data.frame is the template
 trials.merge <-  function(df1, df2) {
@@ -44,21 +46,39 @@ When you click the **Knit** button a document will be generated that includes bo
 offsite_spp <- c("FDI", "FDC", "LW", "PY", "PW", "CW","BA", "BG", "PA", "YC", "BN", "BP", "LS", "FD")
 offsite.trials <- fread("./clean_data/Combined_Offsite_Trial_Info.csv") %>% filter(Latitude > 52)
 offsite.planting <- fread("./clean_data/Combined_Offsite_Planting_Info.csv") %>% mutate(SppVar = toupper(SppVar)) %>% filter(SppVar %in% offsite_spp)
+offsite.bybec <- left_join(offsite.trials, offsite.planting) #%>% filter(PlantingYear < 2017)
+fwrite(offsite.bybec, "./clean_data/Combined_Offsite_Trial_Spp.csv")
 ```
 
-```{r update BGCv12}
-offsite.trials.all <- fread("./clean_data/Combined_Offsite_Trial_Info.csv") %>% st_as_sf()
-bgc <- vect("./spatial_files/BC_BGCv12_Published_Fixed_2.gpkg")
+```{r update BGCv12 info}
+# bgc <- vect("./spatial_files/BC_BGCv12_Published_Fixed_2.gpkg")
+# crs(bgc) = 'EPSG:3005'
+# offsite.trials.all <- fread("./clean_data/Combined_Offsite_Trial_Info.csv") %>% dplyr::rename(BGC_Orig = BGC) %>% mutate(latitude = Latitude, longitude = Longitude) %>% st_as_sf(coords = c("longitude", "latitude")) %>% vect()
+# crs(offsite.trials.all) = 'EPSG:4269'
+# offsite.trials.all2 <- project(offsite.trials.all, 'EPSG:3005') # , 'epsg:4326', 'epsg:3005')
+# offsite.trials.all3 <- intersect(offsite.trials.all2, bgc) %>% as.data.frame %>% distinct() %>% mutate(BGCv12 = BGC)%>% mutate(BGC = BGC_Orig) %>% select(-BGC_Orig)
+# fwrite(offsite.trials.all3, "./clean_data/Combined_Offsite_Trial_Info2.csv")
+```
 
+```{r count of trials by species by BGC}
+Offsite.bybec <- left_join(offsite.trials, offsite.planting) %>% filter(PlantingYear < 2017) %>% droplevels()
+Offsite.bybec.spp <- Offsite.bybec  %>%  select(Trial_ID, BGCv12, SppVar, PlantingYear) %>% 
+  group_by (SppVar, BGCv12) %>% tally(sort = TRUE) %>% arrange(SppVar)
+fwrite(Offsite.bybec.spp, "./outputs/offsitetrials_by_spp_by_bgc.csv")
 
 ```
+
 
 ```{r create climate set}
 Offsite.bybec <- left_join(offsite.trials, offsite.planting) %>% droplevels()
-tooyoung <- Offsite.bybec %>% filter(PlantingYear > 2016) %>% select(Trial_ID)
+tooyoung <- Offsite.bybec %>% filter(PlantingYear < 2016) %>% select(Trial_ID)
 Offsite.for.climatebc <-  Offsite.bybec %>% select(Trial_ID, SppVar, Latitude, Longitude, Elevation) %>% rename(ID1 = 1, ID2 = 2, lat = 3, long = 4, el  =5)
 fwrite(Offsite.for.climatebc, "./clean_data/Offsite_for_ClimateBC.csv")
-Offsite.climate <- fread("./clean_data/Offsite_for_ClimateBC_Normal_1971_2000S.csv") %>% filter(!DD5 == -9999)%>% filter(!is.na(ID2), !ID2 == "")
+```
+
+
+```{r look for coldest trial sites}
+Offsite.climate <- fread("./clean_data/Offsite_for_ClimateBC_Normal_1981_2010SY.csv") %>% filter(!DD5 == -9999)%>% filter(!is.na(ID2), !ID2 == "")
 Offsite.climate.test <- Offsite.climate %>% select(ID2, DD5, CMD, Tmin_sp, bFFP) 
 # Top 10 coldest trials by spp for priority sampling
 Offsite.climate.coldest <- Offsite.climate  %>%  select(ID1, ID2, Latitude, Longitude, Elevation, DD5, CMD, Tmin_sp, bFFP) %>% 
@@ -88,7 +108,7 @@ all.dat <- rbind(us.dat, bc.dat)
 all.dat$ID2[] = map[all.dat$ID2]
 fwrite(all.dat, "./data/spprange_for_climatebc.csv")
 
-spp.range.climate <- fread("./data/spprange_for_climatebc_Normal_1971_2000SY.csv") %>% filter(!DD5 == -9999)
+spp.range.climate <- fread("./data/spprange_for_climatebc_Normal_191_2000SY.csv") %>% filter(!DD5 == -9999)
 spp.climate.test <- spp.range.climate %>% select(ID2, DD5, CMD, Tmin_sp, bFFP) %>% filter(!is.na(ID2), !ID2 == "")
 all.climate.test <- rbind(spp.climate.test, Offsite.climate.test) %>% arrange(ID2)
 DataExplorer::create_report(all.climate.test, y = "ID2")
@@ -96,13 +116,3 @@ DataExplorer::create_report(all.climate.test, y = "ID2")
 ```
 
 
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
