@@ -95,16 +95,16 @@ fwrite(Offsite.planting, "./clean_data/Offsite_Trial_Planting_Info.csv")
 
 
 ```{r import and merge saved clean files}
-Offsite.trials <- fread("./clean_data/Offsite_Trial_Site_Info.csv") %>% mutate(PlantingDate = as.character(PlantingDate))
-EP.trials <- fread("./clean_data/EP_Offsite_trial_sites.csv")
-Socha.trials <- fread("./clean_data/Socha_Trial_Info_reduced.csv")
+Offsite.trials <- fread("./data/Offsite_Trial_Site_Info.csv") %>% mutate(PlantingDate = as.character(PlantingDate))
+EP.trials <- fread("./data/EP_Offsite_trial_sites.csv")
+Socha.trials <- fread("./data/Socha_Trial_Info_reduced.csv")
 Offsite.trials <- trials.merge(Offsite.trials, EP.trials)
 Offsite.trials <- trials.merge(Offsite.trials, Socha.trials)
 fwrite(Offsite.trials, "./clean_data/Combined_Offsite_Trial_Info.csv")
 
-Offsite.planting <- fread("./clean_data/Offsite_Trial_Planting_Info.csv")
-EP.planting <- fread("./clean_data/EP_Offsite_planting_info.csv")
-Socha.planting <- fread("./clean_data/Socha_Planting_Info_reduced.csv")
+Offsite.planting <- fread("./data/Offsite_Trial_Planting_Info.csv")
+EP.planting <- fread("./data/EP_Offsite_planting_info.csv")
+Socha.planting <- fread("./data/Socha_Planting_Info_reduced.csv")
 Offsite.planting <- trials.merge(Offsite.planting, EP.planting)
 Offsite.planting <- trials.merge(Offsite.planting, Socha.planting)
 fwrite(Offsite.planting, "./clean_data/Combined_Offsite_Planting_Info.csv")
