@@ -1,0 +1,44 @@
+---
+title: "Select_Seedlots"
+author: "Will MacKenzie"
+date: "2023-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(data.table)
+require(tidyverse)
+require(stringr)
+```
+
+
+```{r import}
+# cbst <- fread("./inputs/All_migrated_height_list.csv")
+# xx <- fread("./inputs/Yc_migrated_height_list.csv")
+# cbst <- rbind(cbst, xx)
+# fwrite(cbst, "inputs/all_CBST_migrated.csv")
+# cbst <- cbst %>% filter(HTp_pred >0.9)
+#fwrite(cbst, "inputs/all_CBST_migrated_90.csv")
+cbst <- fread("inputs/all_CBST_migrated_90.csv") %>% mutate(Spp = toupper(Sp_code)) #%>% filter(HTp_pred >0.97)
+spp <- c("FDI", "FDC", "LW", "PY", "PW", "CW")
+overrun <- fread("./inputs/2023_Overun_List.csv") %>% filter(Spp %in% spp) %>% mutate(BGC = str_replace_all(SourceBGC," ", ""))
+xx <- cbst %>% filter(Spp == "PW")
+```
+
+
+```{r join tables, echo=FALSE}
+cbst2 <- left_join(overrun, cbst, by = c("Spp" = "Spp", "BGC" = "BECvar_seed")) %>% filter(Season == "Sp")
+PW <- cbst2 %>% filter(Spp == "PW")
+bgcs_interest <- c("SBS")
+overruns_SBS <- cbst2 %>% filter(str_detect(BECvarfut_plantation,  "SBS"))
+fwrite(overruns_SBS, "./outputs/2023_overruns_SBS.csv")
+ICH_bgcs_interest <- c("ICHmc2", "ICHmc1", "ICHwc", "ICHvc", "ICHmm", "ICHvk2", "ICHwk3", "ICHwk4")
+overruns_ICH <- cbst2 %>% filter(BECvarfut_plantation %in% ICH_bgcs_interest)
+fwrite(overruns_ICH, "./outputs/2023_overruns_ICH.csv")
+ESSF_bgcs_interest <- c("ESSFmc", "ESSFwv", "ESSFwk1", "ESSFmv3")
+overruns_ESSF <- cbst2 %>% filter(BECvarfut_plantation %in% ESSF_bgcs_interest)
+fwrite(overruns_ESSF, "./outputs/2023_overruns_ESSF.csv")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
