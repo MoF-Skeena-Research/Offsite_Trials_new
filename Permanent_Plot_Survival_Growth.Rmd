@@ -127,7 +127,7 @@ SI_box_30 <- ggplot(data_30, aes(x= spp.pop, y=SI50))+
   theme_pem()
 SI_box_30
 
-data_sum <- data3 %>%  group_by(spp.pop, age) %>% summarize(planted = n(), survived = sum(!is.na(height)), si50 = mean(SI50, na.rm = TRUE)) %>% mutate(survival = survived/planted) 
+# data_sum <- data_30 %>%  group_by(site, spp.pop, age) %>% summarize(planted = n(), survived = sum(!is.na(height)), si50 = mean(SI50, na.rm = TRUE)) %>% mutate(survival = survived/planted) 
 
 ```
 
@@ -135,20 +135,21 @@ data_sum <- data3 %>%  group_by(spp.pop, age) %>% summarize(planted = n(), survi
 file.name <- "./data/Bowser_EP0976_Data.csv"
 dead = c("999", "0", ".", "..", "", "x")
 data1 <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, !height %in% dead, 1)) %>% mutate(height = replace(height, height %in% dead, 0)) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sw", "Py", "Bp"))) %>% 
-  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"))  %>% mutate_if(is.character, as.factor) %>%  rename(live_dead = height)%>% select(site, seedsource, live_dead)
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"))  %>% mutate_if(is.character, as.factor) %>%  rename(live_dead = height)%>% select(site, seedsource, spp, live_dead)
 
 
 file.name <- "./data/Date_EP0976_Data.csv"
 data2 <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, !height %in% dead, 1)) %>% mutate(height = replace(height, height %in% dead, 0)) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sw", "Py", "Bp"))) %>% 
-  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"))  %>% mutate_if(is.character, as.factor) %>%  rename(live_dead = height)%>% select(site, seedsource, live_dead) %>% mutate(site = "Date")
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"))  %>% mutate_if(is.character, as.factor) %>%  rename(live_dead = height)%>% select(site, seedsource, spp, live_dead) %>% mutate(site = "Date")
 
 
 file.name <- "./data/Stewart_EP0976_Data.csv"
 data3 <- fread(file.name) %>% select(site, `sp/zone`, rep, tree, ht30) %>% rename(seedsource = `sp/zone`) %>% pivot_longer(cols = c(-site, -seedsource, -rep, -tree), names_to = "age", values_to = "height") %>%  mutate(height = replace(height, !height %in% dead, 1)) %>% mutate(height = replace(height, height %in% dead, 0)) %>% mutate(seedsource = replace(seedsource, seedsource %in% old.codes, c("Sw", "Py", "Bp"))) %>% 
-  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"))  %>% mutate_if(is.character, as.factor) %>%  rename(live_dead = height)%>% select(site, seedsource, live_dead)
+  mutate(spp = ifelse(seedsource %in% spp.codes, seedsource, "Fd"))  %>% mutate_if(is.character, as.factor) %>%  rename(live_dead = height)%>% select(site, seedsource, spp, live_dead)
 
-survived <- rbind(data1, data2, data3) %>% group_by(site, seedsource) %>%  count(live_dead) %>% mutate(planted = sum(n)) %>% filter(live_dead == "1") %>% mutate(survival_rate = round((n/planted)*100),0)
+survived <- rbind(data1, data2, data3) %>% group_by(site, seedsource) %>%  add_count(live_dead) %>% distinct() %>% mutate(planted = sum(n)) %>% filter(live_dead == "1") %>% mutate(survival_rate = round((n/planted)*100),0)
 
+fwrite(survived, "./outputs/EP0976_Tree_Survival.csv")
 
 ```
 
