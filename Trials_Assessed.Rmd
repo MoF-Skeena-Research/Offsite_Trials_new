@@ -1,0 +1,108 @@
+---
+title: "Trial_Assessments"
+author: "Will MacKenzie"
+date: "2023-02-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) # bunch of useful packages
+library(here) # good to use 
+library(readxl) # required to read excel files
+library(mapview) # use to quickly map sites
+library(sf) # working with spatial data
+library(bcmaps) # spatial datasets for BC, including BEC
+```
+
+
+```{r read data, include=FALSE}
+EmpSal <- fread("./inputs/clean_data2.csv")
+head(EmpSal)
+# Read field data from 2022
+x_raw <- 
+  read_excel(here("./inputs/clean_final.xlsx"), sheet = "Fixed_clean_data")
+head(x_raw)
+# Load bec data (this can take awhile first time)
+
+bgc<-bec()
+
+# Start cleaning data
+x_clean <-
+  
+  # start with raw data, and
+  x_raw %>% 
+  
+  # Remove whitespace,new lines and return characters from all columns
+  mutate(across(everything(),trimws)) %>%   
+  
+  # Replace whitespace in column names with underscore (easier to work with)
+  rename_with(~str_replace_all(.x,pattern=" ",replacement="_")) %>% 
+  
+  # Rename some columns to make them shorter (my preference)
+  rename(Spp=Spp_Code,
+         Spp_loc=Local_or_Offsite,
+         Vigour_var=Vigour_Variability,
+         Rep=Replicate) %>% 
+
+  dplyr::mutate(Best_Vigour2 = ifelse(Best_Vigour == "1-2", 1,
+                                ifelse(Best_Vigour == "2-3", 2, Best_Vigour))) %>% droplevels() %>% 
+  # Standardize species codes
+  mutate(Spp=str_to_title(Spp)) %>% 
+  mutate(Spp=recode(Spp,Red_spruce="Sr", 
+                    Fd="Fdi",
+                    Pl="Pli")) %>%  # because this project will be provincial, we should specify if tree is interior or coastal variety (for Fd and Pl)
+  
+  # Convert columns to appropriate data types
+  mutate(across(c(Latitude:Slope,Planting_Year,BHAge:NodeHeight4),as.numeric)) %>% # warning message the NAs introduced - need to double check Excel file
+  mutate(across(c(Trial_type:Rep,BGC:Spp,Spp_loc,Damage:Vigour_var),factor)) %>%  # convert categorical variables to factors (R term for categorical variable)
+  
+  # Convert to spatial data
+  st_as_sf(coords=c("Longitude","Latitude"),crs=4326) %>%    # specify the crs for WGS1984 (datum used by Avenza to record coordinates, should double check)
+  
+  # Determine BEC for each site (notice it's missing for some of them)
+  # This takes a few seconds to complete, so maybe comment this out or separate into different chunk
+  transform_bc_albers() %>% # have to transform crs to bc albers
+  st_join(bgc[,"MAP_LABEL"]) %>%  # this takes a few seconds
+  rename(BGC_update2022=MAP_LABEL) %>% # rename column
+  mutate(across(BGC_update2022,factor)) %>% # change to categorical variable
+  relocate(BGC_update2022,.after=BGC) %>%  # move location so that can inspect (have to stop the pipe here to do so)
+  
+  # Note that the following code only updates missing BGC values from bcmaps.  BGC recorded in the field are kept.  This means that if someone
+  # incorrectly identified BGC in the field, the error will still be in the data.
+  mutate(BGC=coalesce(BGC,BGC_update2022)) %>%  # use the BEC data from bcmaps package to replace NA values in 'BGC' column
+  dplyr::select(-BGC_update2022) # can remove this column now
+x_clean1 <- x_clean %>% filter(Spp == "Lw") %>% distinct() %>% mutate(rating = as.numeric(Best_Vigour2))
+  
+# Visualize sites on map
+xx <- mapview(x_clean1,zcol="rating", colours = c("green", "yellow", "orange"), at = c(1, 2, 3, 4), na.color = ("red"))
+xx
+  png_fl = "tempfile"(fileext = ".png")
+mapshot(xx, file = "Lw_trial.png")
+
+library(basemaps)
+get_maptypes()
+set_defaults(map_service = "carto", map_type = "light")
+xx <- draw_ext()
+basemap_ggplot(xx)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
