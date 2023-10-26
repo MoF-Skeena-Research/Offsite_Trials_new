@@ -48,8 +48,15 @@ ggplot(veg_tot2, aes(x=block, y=PC, fill = species ))+
   coord_flip()#+
   facet_grid(cols = vars(Site))
 
-  
-veg_corr <- veg_tot %>% select(plot_label, species, PC) %>% pivot_wider(id_cols = plot_label, names_from = species, values_from = PC) %>% select (-TOTAL) %>% mutate_all(~replace_na(.,0))
+ require(mltools) 
+veg_corr <- veg_tot %>% select(plot_label, block, species, PC) %>% mutate(block = as.factor(block)) %>% pivot_wider(id_cols = c(plot_label, block), names_from = species, values_from = PC) %>% select (-TOTAL) %>% mutate_all(~replace_na(.,0)) 
+### add species as one-hot variable
+veg_corr2 <- one_hot(as.data.table(veg_corr )) %>% select(-1)
+## plot correlation matrix with one hot categories
+library(ggcorrplot)
+model.matrix(~0+., data=veg_corr2) %>% 
+  cor(use="pairwise.complete.obs") %>% 
+  ggcorrplot(show.diag=FALSE, type="lower", lab=TRUE, lab_size=2)
 
 tot.cor = cor(veg_corr[-1], method = c("spearman"))
 tot.rcorr = Hmisc::rcorr(as.matrix(veg_corr[-1]))
