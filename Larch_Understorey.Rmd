@@ -25,6 +25,7 @@ library(ggsci)
 library(ggrepel)
 library(ggforce)
 require(Hmisc)
+require(colorspace)
 #source("./_functions/doc_theme_pem.R")
 
 ```
@@ -45,26 +46,31 @@ ggplot(veg_tot2, aes(x=block, y=PC, fill = species ))+
   #geom_boxplot(aes(fill=species))+
   geom_point(position=position_dodge(width=.75),aes(group=species))+
   #geom_dotplot(binaxis = 'y', stackdir = 'center')+
-  coord_flip()#+
+  coord_flip()+
   facet_grid(cols = vars(Site))
-
+ggsave("./graphics/Violin.pdf")
  require(mltools) 
 veg_corr <- veg_tot %>% select(plot_label, block, species, PC) %>% mutate(block = as.factor(block)) %>% pivot_wider(id_cols = c(plot_label, block), names_from = species, values_from = PC) %>% select (-TOTAL) %>% mutate_all(~replace_na(.,0)) 
 ### add species as one-hot variable
 veg_corr2 <- one_hot(as.data.table(veg_corr )) %>% select(-1)
 ## plot correlation matrix with one hot categories
 library(ggcorrplot)
-model.matrix(~0+., data=veg_corr2) %>% 
+corr.diag <- model.matrix(~0+., data=veg_corr2) %>% 
   cor(use="pairwise.complete.obs") %>% 
   ggcorrplot(show.diag=FALSE, type="lower", lab=TRUE, lab_size=2)
+corr.diag
+ggsave("./graphics/TotalsCorrelation.pdf")
 
-tot.cor = cor(veg_corr[-1], method = c("spearman"))
-tot.rcorr = Hmisc::rcorr(as.matrix(veg_corr[-1]))
-tot.rcorr
 
 library("PerformanceAnalytics")
+## shows correlation, histogram, and statistical values
+pdf(file="./graphics/TotalsCorrelation2.pdf")
+chart.Correlation(veg_corr2, histogram=TRUE, pch=19)
+dev.off()
 
-chart.Correlation(veg_corr[-1], histogram=TRUE, pch=19)
+# tot.cor = cor(veg_corr[-1], method = c("spearman"))
+# tot.rcorr = Hmisc::rcorr(as.matrix(veg_corr[-1]))
+# tot.rcorr
 
 ```
 
@@ -127,6 +133,7 @@ theme(legend.position = "none", plot.title = element_text(size = 14))
 }
 
 get_ord(veg_matrix, veg.site, group = "Site")
+ggsave("./graphics/ordination_by_trialsite.pdf")
 ```
 
 
