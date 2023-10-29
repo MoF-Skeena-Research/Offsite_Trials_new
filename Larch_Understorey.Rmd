@@ -26,6 +26,9 @@ library(ggrepel)
 library(ggforce)
 require(Hmisc)
 require(colorspace)
+require(ape)
+require(ggdendro)
+require(dendextend)
 #source("./_functions/doc_theme_pem.R")
 
 ```
@@ -88,18 +91,27 @@ veg.site <- veg_spp %>% select(plot_label, everything(), -Plot, -Date, -Layer, -
 veg_matrix <- matrify(veg_anal)
 
 #veg_matrix <- pivot_wider(veg_anal, names_from = species, values_from = PC) %>% replace_na(0)
-veg.dist <-  proxy::dist(veg_matrix, method = "jaccard")
+veg.dist <-  proxy::dist(method = "jaccard")
 veg.1=hclust(veg.dist,method="ward.D")
-plot(veg.1)
+plot(veg.1, hang = -1, cex = .6)
+plot(as.phylo(veg.1), cex = 0.3, label.offset = 0.1)
+ggdendrogram(veg.1, rotate = FALSE, theme_dendro = TRUE, size = .5)
 #rect.hclust(veg.1,4)
 veg.scale=cmdscale(veg.dist,eig=T)
 veg.scale$GOF
+pdf(file="./graphics/ClusterDiagram.pdf")
+dend <- veg_matrix %>%  
+        proxy::dist(method = "jaccard") %>% hclust(method="ward.D") %>% as.dendrogram %>% set("labels_col", c("orange", "blue", "red"), k=3) %>% set("labels_cex", .5) %>% plot
+dev.off()
+# gg.dend <- as.ggdend(dend)
+# ggplot(gg.dend, horiz = TRUE)
 
-as_tibble(veg.scale$points) %>%
-  rownames_to_column("site") %>% 
-    mutate(group=veg.site$block) %>%
-  ggplot(aes(x=V1,y=V2,colour = group, label=site))+
-    geom_point()+geom_text_repel()+coord_fixed()
+
+# as_tibble(veg.scale$points) %>%
+#   rownames_to_column("site") %>% 
+#     mutate(group=veg.site$block) %>%
+#   ggplot(aes(x=V1,y=V2,colour = group, label=site))+
+#     geom_point()+geom_text_repel()+coord_fixed()
 ```
 
 
