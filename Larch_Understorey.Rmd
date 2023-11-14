@@ -84,6 +84,7 @@ dev.off()
 ```{r pressure, echo=FALSE}
 require(labdsv)
 library(vegan)
+require(proxy)
 trees <- c("ABIELAS", "PINUCON", "THUJPLI", "PINUCON", "PICEENE", "LARIOCC", "PSEUMEN", "BETUPAP", "TSUGHET")
 site.select = c("BB","BC","DC")
 veg_anal <- veg_spp %>% filter(Site_label %in% site.select) %>% select(plot_label, species, PC) %>% mutate(PC = as.numeric(PC)) %>% filter(!species %in% trees) %>%  drop_na()
@@ -91,7 +92,7 @@ veg.site <- veg_spp %>% select(plot_label, everything(), -Plot, -Date, -Layer, -
 veg_matrix <- matrify(veg_anal)
 
 #veg_matrix <- pivot_wider(veg_anal, names_from = species, values_from = PC) %>% replace_na(0)
-veg.dist <-  proxy::dist(method = "jaccard")
+veg.dist <-  proxy::dist(veg_matrix,method = "eJaccard")
 veg.1=hclust(veg.dist,method="ward.D")
 plot(veg.1, hang = -1, cex = .6)
 plot(as.phylo(veg.1), cex = 0.3, label.offset = 0.1)
