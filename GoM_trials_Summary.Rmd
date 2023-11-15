@@ -6,58 +6,70 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 library(RPostgres)
 library(data.table)
 require(dplyr)
-require(DataExplorer)
+require(knitr)
+require(kableExtra)
 # 
-# 
-# load_GOM_psites <- function() {
-#   con <- dbConnect(RPostgres::Postgres(),dbname = 'reforest_app',
-#                    host = '159.203.56.62',
-#                    port = 5432, # or any other port specified by your DBA
-#                    user = 'postgres',
-#                    password = 'BECisGOD2023')
-#   
-#   psites <- data.table(dbGetQuery(con,"select * from planting_info"))
-#   psites
-# }
-# psites <- load_GOM_psites()
-
-con <- dbConnect(RPostgres::Postgres(),dbname = 'reforest_app',
-                 host = '159.203.56.62',
-                 port = 5432, # or any other port specified by your DBA
-                 user = 'postgres',
-                 password = 'BECisGOD2023')
 ```
 
-## Download data off server
 
-```{r import data}
-psites <- data.table(dbGetQuery(con,"select * from planting_info"))
-planter <- data.table(dbGetQuery(con,"select * from planter_info"))
-trials <- data.table(dbGetQuery(con,"select * from trial_info"))
-plantedby <- left_join(psites,planter, by = c("planter_id" = "_id")) %>% select(planter_id.y) %>% count(planter_id.y)
-fwrite(plantedby, "./outputs/GoM_planted_by_planter.csv")
-fwrite(planter, "./outputs/GoM_planters.csv")
-dbGetQuery(con,"select distinct species from planting_info")
+```{r import data of server}
 
-psites[planter, PlanterName := i.planter_id, on = c(planter_id = "_id")]
-#psites <- psites[!PlanterName %in% c("KSD","Coco","kdaust"),]
-fwrite(psites, "./outputs/PlantingSites_GOM.csv")
-fwrite(planter, "./outputs/Planters_GOM.csv")
-fwrite(trials, "./outputs/Trials_GOM.csv")
+# con <- dbConnect(RPostgres::Postgres(),dbname = 'reforest_app',
+#                  host = '159.203.56.62',
+#                  port = 5432, # or any other port specified by your DBA
+#                  user = 'postgres',
+#                  password = 'BECisGOD2023')
+
+# psites <- data.table(dbGetQuery(con,"select * from planting_info"))
+# planter <- data.table(dbGetQuery(con,"select * from planter_info"))
+# trials <- data.table(dbGetQuery(con,"select * from trial_info"))
+# plantedby <- left_join(psites,planter, by = c("planter_id" = "_id")) %>% select(planter_id.y) %>% count(planter_id.y)
+# fwrite(plantedby, "./outputs/GoM_planted_by_planter.csv")
+# fwrite(planter, "./outputs/GoM_planters.csv")
+# dbGetQuery(con,"select distinct species from planting_info")
+# 
+# psites[planter, PlanterName := i.planter_id, on = c(planter_id = "_id")]
+# #psites <- psites[!PlanterName %in% c("KSD","Coco","kdaust"),]
+# fwrite(psites, "./outputs/PlantingSites_GOM.csv")
+# fwrite(planter, "./outputs/Planters_GOM.csv")
+# fwrite(trials, "./outputs/Trials_GOM.csv")
 
 ```
 
-### Map of trial locations
-```{r}
+#### Map of trial locations
+```{r build map of sites}
+psites.working <- fread("F:/OneDrive - Government of BC/OffSite-Trials/Michelle/planting_info_updates.csv") %>% filter(!remove == "x")
+
+require(sf)
 require(mapview)
-```
+require(sp)
+require(pals)
+require(leaflet)
 
-```{r trial summaries, echo=FALSE}
-DataExplorer::create_report(psites)
+psites2 <- psites.working %>% data.frame %>% select(longitude, latitude, species, seedlot) %>% filter(!is.na(longitude))# %>% mutate(species = as.factor(species))
+ pnts2 <- SpatialPointsDataFrame(psites2[,1:2], psites2) 
+ psites3 <- psites2 %>%   st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>% 
+  st_jitter(factor = 0.003)
+ # convert data frame to spatial points
+pnts_vect <- terra::vect(psites3)
+#terra::crs(pnts_vect) <- "epsg:4326"  ### the projection library is currently missing :-(
+terra::crs(pnts_vect) <- "+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"
+mapView(pnts_vect,  zcol = "species", cex = 4, label = pnts_vect$species,
+            map.types = "OpenTopoMap", 
+            col.regions =  trubetskoy , legend = TRUE)
+    
+```
+#### Count of trials by species
+```{r trial summaries, echo=FALSE, }
+Count_species <- psites2 %>% group_by(species) %>% count()
+total_count <- psites2 %>% count() %>% mutate(species = "Total") %>% select(species, n)
+Count_species <- rbind(Count_species, total_count) 
+Count_species %>% kbl() %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+
 ```
 
 
