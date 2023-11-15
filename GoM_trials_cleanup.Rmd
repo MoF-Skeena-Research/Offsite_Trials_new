@@ -54,9 +54,16 @@ fwrite(trials, "./outputs/Trials_GOM.csv")
 
 ### Summarize
 ```{r}
-plantedby <- left_join(psites,planter, by = c("planter_id" = "_id")) %>% select(planter_id.y) %>% count(planter_id.y)
-#planter2 <- planter %>% group_by(`_id`) %>% mutate(countplanter = n_distinct(`_id`, planter_id))
+plantedby <- full_join(psites,planter, by = c("planter_id" = "_id"))# %>% select(planter_id.y) %>% count(planter_id.y)
+planter2 <- plantedby %>% group_by(planter_id, planter_id.y) %>% summarize(countplanter = n())
+fwrite(planter2, "./outputs/CountPlantings_by_planter.csv")
+num_trials_planters <- left_join(planter, psites, by = c("_id" = "planter_id")) %>% select(`_id`, plantation_id) %>% group_by(`_id`) %>% summarise(non_na_count = sum(!is.na(plantation_id))) %>% left_join(planter)
+fwrite(num_trials_planters, "./outputs/CountPlantings_by_plantertable.csv")
 
+trialsby <- full_join(psites,trials, by = c("planter_id" = "_id"))
+trials2 <- trialsby %>% group_by(trial_id.x) %>% summarize(countplantations = n())
+species_seedlot <- psites %>% count(species, seedlot)
+fwrite(species_seedlot, "./outputs/CountSppxSeedlot.csv")
 
 ```
 
