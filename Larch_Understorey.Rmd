@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
 
 require(sf)
 require(data.table)
@@ -150,30 +150,30 @@ ggsave("./graphics/ordination_by_trialsite.pdf")
 ```
 
 
-```{r pressure, echo=FALSE}
-h=veg.1$height
-h
-d=tibble(clusters=53:2,height=h)
-
-
-dist <- dsvdis(veg_matrix, index = "bray/curtis")
-nmds <- nmds(dist)
-plot(nmds, ids = TRUE)
-
-as_tibble(dune.scale$points) %>% 
-  rownames_to_column("site") %>% 
-  mutate(farming=dune.env$Management) %>% 
-  ggplot(aes(x=V1,y=V2,colour=farming,label=site))+
-    geom_point()+geom_text_repel()+coord_fixed()
-
-
-#Get MDS stats
-sol<- metaMDS(veg_matrix,distance = "bray", k = 2, trymax = 50)
-ord <- ordiplot(sol, choices = c(1,2))
-type <- sites.long(ord, env.dat = veg.site)
-plot.new()
-ord<-ordiellipse(sol, labels ,display = "sites", kind ="sd", conf = 0.95, label = T)
-dev.off()
+```{r testscripts, echo=FALSE}
+# h=veg.1$height
+# h
+# d=tibble(clusters=53:2,height=h)
+# 
+# 
+# dist <- dsvdis(veg_matrix, index = "bray/curtis")
+# nmds <- nmds(dist)
+# plot(nmds, ids = TRUE)
+# 
+# as_tibble(dune.scale$points) %>% 
+#   rownames_to_column("site") %>% 
+#   mutate(farming=dune.env$Management) %>% 
+#   ggplot(aes(x=V1,y=V2,colour=farming,label=site))+
+#     geom_point()+geom_text_repel()+coord_fixed()
+# 
+# 
+# #Get MDS stats
+# sol<- metaMDS(veg_matrix,distance = "bray", k = 2, trymax = 50)
+# ord <- ordiplot(sol, choices = c(1,2))
+# type <- sites.long(ord, env.dat = veg.site)
+# plot.new()
+# ord<-ordiellipse(sol, labels ,display = "sites", kind ="sd", conf = 0.95, label = T)
+# dev.off()
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
