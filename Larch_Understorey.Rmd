@@ -92,10 +92,10 @@ veg.site <- veg_spp %>% select(plot_label, everything(), -Plot, -Date, -Layer, -
 veg_matrix <- matrify(veg_anal)
 
 #veg_matrix <- pivot_wider(veg_anal, names_from = species, values_from = PC) %>% replace_na(0)
-veg.dist <-  proxy::dist(veg_matrix,method = "eJaccard")
+veg.dist <-  proxy::dist(veg_matrix,method = "jaccard")
 veg.1=hclust(veg.dist,method="ward.D")
 plot(veg.1, hang = -1, cex = .6)
-plot(as.phylo(veg.1), cex = 0.3, label.offset = 0.1)
+plot(as.phylo(veg.1), cex = .6, label.offset = 0.1)
 ggdendrogram(veg.1, rotate = FALSE, theme_dendro = TRUE, size = .5)
 #rect.hclust(veg.1,4)
 veg.scale=cmdscale(veg.dist,eig=T)
