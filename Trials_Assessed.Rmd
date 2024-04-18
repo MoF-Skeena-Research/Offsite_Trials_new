@@ -17,8 +17,8 @@ library(bcmaps) # spatial datasets for BC, including BEC
 
 
 ```{r read data, include=FALSE}
-EmpSal <- fread("./inputs/clean_data2.csv")
-head(EmpSal)
+# EmpSal <- fread("./inputs/clean_data2.csv")
+# head(EmpSal)
 # Read field data from 2022
 x_raw <- 
   read_excel(here("./inputs/clean_final.xlsx"), sheet = "Fixed_clean_data")
@@ -46,7 +46,8 @@ x_clean <-
          Rep=Replicate) %>% 
 
   dplyr::mutate(Best_Vigour2 = ifelse(Best_Vigour == "1-2", 1,
-                                ifelse(Best_Vigour == "2-3", 2, Best_Vigour))) %>% droplevels() %>% 
+                                ifelse(Best_Vigour == "2-3", 2, 
+                                       ifelse(Best_Vigour == "3-4", 3, Best_Vigour)))) %>% droplevels() %>% 
   # Standardize species codes
   mutate(Spp=str_to_title(Spp)) %>% 
   mutate(Spp=recode(Spp,Red_spruce="Sr", 
@@ -56,10 +57,10 @@ x_clean <-
   # Convert columns to appropriate data types
   mutate(across(c(Latitude:Slope,Planting_Year,BHAge:NodeHeight4),as.numeric)) %>% # warning message the NAs introduced - need to double check Excel file
   mutate(across(c(Trial_type:Rep,BGC:Spp,Spp_loc,Damage:Vigour_var),factor)) %>%  # convert categorical variables to factors (R term for categorical variable)
-  
+
   # Convert to spatial data
   st_as_sf(coords=c("Longitude","Latitude"),crs=4326) %>%    # specify the crs for WGS1984 (datum used by Avenza to record coordinates, should double check)
-  
+  st_jitter(factor = 0.01) %>% 
   # Determine BEC for each site (notice it's missing for some of them)
   # This takes a few seconds to complete, so maybe comment this out or separate into different chunk
   transform_bc_albers() %>% # have to transform crs to bc albers
@@ -71,20 +72,31 @@ x_clean <-
   # Note that the following code only updates missing BGC values from bcmaps.  BGC recorded in the field are kept.  This means that if someone
   # incorrectly identified BGC in the field, the error will still be in the data.
   mutate(BGC=coalesce(BGC,BGC_update2022)) %>%  # use the BEC data from bcmaps package to replace NA values in 'BGC' column
-  dplyr::select(-BGC_update2022) # can remove this column now
-x_clean1 <- x_clean %>% filter(Spp == "Lw") %>% distinct() %>% mutate(rating = as.numeric(Best_Vigour2))
+  dplyr::select(-BGC_update2022)
+# can remove this column now
+
+st_write(x_clean, "./spatial_files/assessed_site.gpkg" )
+```
+
+
+```{r plot, include=FALSE}
+x_clean1 <- x_clean %>% filter(Spp == "Py") %>% distinct() %>% mutate(rating = as.factor(Best_Vigour2))
   
 # Visualize sites on map
-xx <- mapview(x_clean1,zcol="rating", colours = c("green", "yellow", "orange"), at = c(1, 2, 3, 4), na.color = ("red"))
+xx <- mapview(x_clean1, zcol="rating", col.regions = c("blue", "green", "yellow", "orange", "red"), na.color = ("red"), legend = TRUE)
 xx
-  png_fl = "tempfile"(fileext = ".png")
-mapshot(xx, file = "Lw_trial.png")
 
-library(basemaps)
-get_maptypes()
-set_defaults(map_service = "carto", map_type = "light")
-xx <- draw_ext()
-basemap_ggplot(xx)
+  # png_fl = "tempfile"(fileext = ".png")
+# mapshot(xx, file = "Lw_trial.png")
+```
+
+
+```{r read data, include=FALSE}
+# library(basemaps)
+# get_maptypes()
+# set_defaults(map_service = "carto", map_type = "light")
+# xx <- draw_ext()
+# basemap_ggplot(xx)
 ```
 
 
