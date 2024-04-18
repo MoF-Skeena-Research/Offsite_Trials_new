@@ -12,18 +12,19 @@ library(data.table)
 require(dplyr)
 require(knitr)
 require(kableExtra)
+require(ggplot2)
 # 
 ```
 
 
 ```{r import data of server}
-
+# 
 # con <- dbConnect(RPostgres::Postgres(),dbname = 'reforest_app',
 #                  host = '159.203.56.62',
 #                  port = 5432, # or any other port specified by your DBA
 #                  user = 'postgres',
 #                  password = 'BECisGOD2023')
-
+# 
 # psites <- data.table(dbGetQuery(con,"select * from planting_info"))
 # planter <- data.table(dbGetQuery(con,"select * from planter_info"))
 # trials <- data.table(dbGetQuery(con,"select * from trial_info"))
@@ -42,7 +43,7 @@ require(kableExtra)
 
 #### Map of trial locations
 ```{r build map of sites}
-psites.working <- fread("F:/OneDrive - Government of BC/OffSite-Trials/Michelle/planting_info_updates.csv") %>% filter(!remove == "x")
+psites.working <- fread("F:/OneDrive - Government of BC/OffSite-Trials/Michelle/GOM/planting_info_updates.csv") %>% filter(!remove == "x")
 
 require(sf)
 require(mapview)
@@ -50,9 +51,9 @@ require(sp)
 require(pals)
 require(leaflet)
 
-psites2 <- psites.working %>% data.frame %>% select(longitude, latitude, species, seedlot) %>% filter(!is.na(longitude))# %>% mutate(species = as.factor(species))
- pnts2 <- SpatialPointsDataFrame(psites2[,1:2], psites2) 
- psites3 <- psites2 %>%   st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>% 
+psites.spp <- psites.working %>% data.frame %>% select(longitude, latitude, species, seedlot) %>% filter(!is.na(longitude))# %>% mutate(species = as.factor(species))
+ pnts2 <- SpatialPointsDataFrame(psites.spp[,1:2], psites.spp) 
+ psites3 <- psites.spp %>%   st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>% 
   st_jitter(factor = 0.003)
  # convert data frame to spatial points
 pnts_vect <- terra::vect(psites3)
@@ -65,11 +66,28 @@ mapView(pnts_vect,  zcol = "species", cex = 4, label = pnts_vect$species,
 ```
 #### Count of trials by species
 ```{r trial summaries, echo=FALSE, }
-Count_species <- psites2 %>% group_by(species) %>% count()
-total_count <- psites2 %>% count() %>% mutate(species = "Total") %>% select(species, n)
+Count_species <- psites.spp %>% group_by(species) %>% count()
+total_count <- psites.spp %>% count() %>% mutate(species = "Total") %>% select(species, n)
 Count_species <- rbind(Count_species, total_count) 
-Count_species %>% kbl() %>% kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+xx <- Count_species %>% kbl() %>% kable_styling(bootstrap_options = "striped", full_width = F)#, position = "left")
 
 ```
 
+
+```{r ggplot}
+
+ggplot(psites.spp, aes(x=species))+
+  geom_bar()
+ggsave("./graphics/barchart_species.png")
+```
+
+```{r}
+ #psites.working %>% data.frame 
+psites.planter <- as.data.frame(psites.working) %>% select(longitude, latitude, trial_owner) %>% filter(!is.na(longitude))
+
+ggplot(psites.planter, aes(x=trial_owner))+
+  geom_bar()+
+    theme(axis.text.x=element_text(angle=90,hjust=1))
+ggsave("./graphics/barchart_trialowner.png")
+```
 
