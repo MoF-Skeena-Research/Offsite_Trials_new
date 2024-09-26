@@ -1,0 +1,170 @@
+---
+title: "Qualitative Species Performance Ratings of AMAT trials"
+author: "William H MacKenzie"
+date: "20/09/2024"
+format:
+  typst:
+    toc: false
+    toc-depth: 2
+    toc-title: Contents
+    section-numbering: 1.1.1
+    columns: 1
+    fig-width: 7
+    fig-height: 10
+    fig-caption: true
+    fig-dpi: 600
+
+editor: visual
+execute:
+  echo: false
+  error: false
+  warning: false
+  message: false
+  fig.align: 'left'
+  fig.cap: true
+  fig.pos: H
+  dev: pdf
+  fig.ext: pdf
+  cache: false
+  fig.retina: 2
+  dpi: 600
+  fig.path: "./figures/"
+---
+
+Qualitative ratings of performance are generated from survival and height data collected from long-term trials. The best performing Stock_IDs for each species is identified by selecting the Stock_IDs with max(sum of heights). The single metric balances survival and growth. A mean performance (MP) is calculated by dividing the sum of heights by the number of trees planted. The rating is used to classify the performance of the Stock_IDs into five qualitative performance categories:
+
+-   Excellent - \>4.0 m MP and survival \>75%,
+
+-   Good - \>2 m MP and survival \>66%),
+
+-   Fair - \>1.5m MP or survival \>75%,
+
+-   Poor - survival \>30%,
+
+-   Fail - survival \<30%.
+
+The best performing Stock_IDs are mapped to show the distribution of the qualitative rating for species across the trial sites.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+require(sf)
+require(data.table)
+require(tidyverse)
+require(terra)
+require(fasterize)
+library(readr)
+library(rmapshaper)
+require(tictoc)
+require(ggplot2)
+require(forcats)
+require(knitr)
+require(data.table)
+require(vegan)
+require(ggpubr)
+require(ggrepel)
+source("./_functions/doc_theme_pem.R")
+
+```
+
+```{r import AMAT trial data and clean, echo=FALSE}
+dead = c(".", "..", "", "0", "9999", "x")
+data1 <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "growth")
+data1 <- data1 %>% select(Site, Sp, SLnum, Rep, HT10) %>%
+  mutate(SLnum = as.factor(SLnum)) %>%
+  mutate(Stock_ID = paste0(Sp, "-", SLnum)) %>%
+  mutate(HT10 = ifelse(HT10 %in% dead, 0, HT10)) %>%
+  #filter(!HT10 %in% dead) %>%
+  mutate(HT10 = as.numeric(HT10)) %>%
+  mutate(height = ifelse(HT10 == 0, NA, HT10/100)) %>%
+  mutate(height = round(height, 2))
+ seedlot.info <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", 
+                            sheet = "seedlots") %>%
+  mutate(SLnum = as.factor(SLnum)) %>% 
+   select(SLnum, Seedlot_label)
+ data1 <- left_join(data1, seedlot.info) %>% select(Site, Sp, Stock_ID, SLnum, Seedlot_label, everything())
+  #mutate_if(is.character, as.factor) %>%%>% droplevels()# %>% rowid_to_column("ID")
+fwrite(data1, "./clean_data/AMAT_10year.csv" )
+
+```
+
+```{r summarize AMAT and select best performing Stock_IDs, echo=FALSE, warning=FALSE}
+data1 <- fread("./clean_data/AMAT_10year.csv")
+trees <- data1 %>% 
+  select(Site, Sp, Stock_ID, Seedlot_label,HT10, height) %>% 
+  group_by(Site, Sp, Stock_ID, Seedlot_label) %>% 
+ #   summarise(planted = n(), survived = sum(!is.na(height))) %>% 
+  summarise(mean.ht = mean(height, na.rm = TRUE), sum.ht = sum(height, na.rm = TRUE),
+            best.ht = max(height, na.rm = TRUE), planted = n(), survived = sum(!is.na(height))) %>% 
+  mutate(survival = round((survived/planted*100),0)) %>% 
+  mutate(best.ht = replace(best.ht, best.ht == '-Inf', 0)) %>% 
+  mutate(mean.ht = replace(mean.ht, is.na(mean.ht), 0)) %>%
+  ungroup %>%
+  group_by(Site, Sp) %>%
+  mutate(best.perform = max(sum.ht)) %>% ungroup %>% 
+  data.frame %>%
+  mutate(mean.perform = round((best.perform/planted),2)) %>% 
+  mutate(rating = ifelse(mean.perform > 4 & survival > 75, "1_Excellent",
+                  ifelse(mean.perform > 2.0 & survival > 66, "2_Good",
+                  ifelse(mean.perform > 1.5 | survival > 75, "3_Fair",
+                  ifelse(survival >30,
+                         "4_Poor","5_Fail")))))
+sites <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", 
+                            sheet = "sites") %>% 
+  select(Site, SiteName, BECvar, LONG_S, LAT_S) %>% rename(longitude = LONG_S, latitude = LAT_S) %>%
+  filter(!Site %in% c("0", "9999", "x")) %>% 
+  mutate(Site = as.factor(Site))
+trials.all <- trees %>% select(Site, Sp, Seedlot_label, mean.perform, rating) %>% 
+  left_join(sites) %>% arrange(Sp)
+fwrite(trials.all, "./clean_data/AMAT_10year_all_assessed.csv")
+best.Stock_ID <- trials.all  %>% group_by(Site, Sp) %>% slice_max(mean.perform, n=1, with_ties = FALSE) %>% ungroup %>% distinct %>% data.frame
+xx <- trees %>% filter(Sp ==  'Lw')
+fwrite(best.Stock_ID, "./clean_data/AMAT_10year_best_Stock_ID.csv")
+```
+
+```{r map function, echo=FALSE}
+trial.map <- function(dat = trial.dat, spp, basemap = map){
+trial.dat1 <- trial.dat %>% mutate_if(is.character, as.factor) %>% filter(Sp %in% spp)
+trial.loc <- st_as_sf(trial.dat1, coords=c("longitude", "latitude"), crs = 4326)
+trial.coords <- st_transform(trial.loc, crs= st_crs(basemap)) %>% st_coordinates() %>% as.data.frame
+trial.loc2 <- as.data.frame(trial.loc) %>% cbind(trial.coords) # convert back to data.frame for ggplot
+map_intense <- ggplot() +
+  geom_sf(data = basemap, color = "grey 70", fill = "grey 95", size = 1)  +
+  theme_light()+
+geom_point(data = trial.loc2, size = 2, aes(X,Y, colour = rating, shape = rating), show.legend = TRUE) +
+  scale_colour_manual(drop = FALSE, values = c('purple', 'green', 'orange', 'red', 'black'))+
+  scale_shape_manual(drop=FALSE, values = c(17, 16, 15, 25, 4), )+
+  ggrepel::geom_text_repel(data = trial.loc2, mapping = aes(X, Y, label = SiteName),
+                  box.padding   = 0.1,
+                  point.padding = 0.1,
+                  segment.color = 'black',
+                  min.segment.length = 0,
+                  direction = 'both',
+                  size = 2,
+                  max.overlaps = 30)+
+  theme(legend.position="bottom") +
+  labs(title = paste0(spp, " trial locations"), x="longitude",  y="latitude")
+#map_intense
+print(map_intense)  
+ggsave(paste0("./maps/", spp, " AMAT performance.pdf"), width = 7, height = 10, units = "in")
+#return(map_intense)
+}
+
+
+```
+
+## AMAT species trials maps
+
+Maps for each tree species showing the performance rating for the best performing Stock_ID at each AMAT trial location.
+
+```{r map distribution of best performing Stock_ID ratings, echo=FALSE, error = FALSE, warning=FALSE, message=FALSE}
+
+trial.dat <- fread("./clean_data/AMAT_10year_best_Stock_ID.csv")
+map <- st_read("D:/CommonTables/BC_AB_US_Shp/WNA_State_Boundaries.gpkg", layer = "WNA_State_Boundaries", quiet = TRUE)
+st_crs(map) <- 3005
+spp.codes = "At"
+spp.codes = str_sort(unique(trial.dat$Sp))
+for (spp in spp.codes){
+   trial.map(trial.dat, spp, map)
+}
+#dist.map(trial.dat, "Py", map)
+```
