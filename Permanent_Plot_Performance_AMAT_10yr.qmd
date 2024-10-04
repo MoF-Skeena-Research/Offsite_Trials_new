@@ -33,15 +33,17 @@ execute:
 
 Qualitative ratings of performance are generated from survival and height data collected from long-term trials. The best performing Stock_IDs for each species is identified by selecting the Stock_IDs with max(sum of heights). The single metric balances survival and growth. A mean performance (MP) is calculated by dividing the sum of heights by the number of trees planted. The rating is used to classify the performance of the Stock_IDs into five qualitative performance categories:
 
--   Excellent - \>4.0 m MP and survival \>75%,
+-   Superior - SI50 >40 and survival >75%,
 
--   Good - \>2 m MP and survival \>66%),
+-   Excellent - SI50>30 and survival >75% or SI50 >40 and survival 50-75%,
 
--   Fair - \>1.5m MP or survival \>75%,
+-   Good - SI50>20 and survival >75% or SI50 >30 and survival 50-75%, or SI50 >40 and survival 25 - 50%,
 
--   Poor - survival \>30%,
+-   Fair - SI50>10 and survival >75% or SI50 >20 and survival 25 - 50%, or SI50 >30 and survival 25 - 50%,
 
--   Fail - survival \<30%.
+-   Poor - survival \>25%,
+
+-   Fail - survival \<25%.
 
 The best performing Stock_IDs are mapped to show the distribution of the qualitative rating for species across the trial sites.
 
@@ -68,20 +70,20 @@ source("./_functions/doc_theme_pem.R")
 
 ```{r import AMAT trial data and clean, echo=FALSE}
 dead = c(".", "..", "", "0", "9999", "x")
-data1 <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "growth")
-data1 <- data1 %>% select(Site, Sp, SLnum, Rep, HT10) %>%
+data1 <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "growth") %>%
+  mutate(plantingyear = Year, assessment_date_qual = Year + 10 ) %>% select(Site, Sp, SLnum, Rep, HT10, plantingyear, assessment_date_qual) %>%
   mutate(SLnum = as.factor(SLnum)) %>%
   mutate(Stock_ID = paste0(Sp, "-", SLnum)) %>%
   mutate(HT10 = ifelse(HT10 %in% dead, 0, HT10)) %>%
   #filter(!HT10 %in% dead) %>%
   mutate(HT10 = as.numeric(HT10)) %>%
-  mutate(height = ifelse(HT10 == 0, NA, HT10/100)) %>%
+  mutate(height = ifelse(HT10 > 0, HT10/100, NA)) %>%
   mutate(height = round(height, 2))
  seedlot.info <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", 
                             sheet = "seedlots") %>%
   mutate(SLnum = as.factor(SLnum)) %>% 
    select(SLnum, Seedlot_label)
- data1 <- left_join(data1, seedlot.info) %>% select(Site, Sp, Stock_ID, SLnum, Seedlot_label, everything())
+ data1 <- left_join(data1, seedlot.info) %>% select(Site, Sp, Stock_ID, SLnum, Seedlot_label, everything()) 
   #mutate_if(is.character, as.factor) %>%%>% droplevels()# %>% rowid_to_column("ID")
 fwrite(data1, "./clean_data/AMAT_10year.csv" )
 
@@ -89,36 +91,60 @@ fwrite(data1, "./clean_data/AMAT_10year.csv" )
 
 ```{r summarize AMAT and select best performing Stock_IDs, echo=FALSE, warning=FALSE}
 data1 <- fread("./clean_data/AMAT_10year.csv")
+qual.rate <- fread("./inputs/SI_Qualrate.csv") %>% select(-age.tot, -si) %>% pivot_wider(names_from = rating, values_from = ht) 
 trees <- data1 %>% 
-  select(Site, Sp, Stock_ID, Seedlot_label,HT10, height) %>% 
+  #select(Site, Sp, Stock_ID, Seedlot_label,HT10, height) %>% 
   group_by(Site, Sp, Stock_ID, Seedlot_label) %>% 
  #   summarise(planted = n(), survived = sum(!is.na(height))) %>% 
-  summarise(mean.ht = mean(height, na.rm = TRUE), sum.ht = sum(height, na.rm = TRUE),
-            best.ht = max(height, na.rm = TRUE), planted = n(), survived = sum(!is.na(height))) %>% 
-  mutate(survival = round((survived/planted*100),0)) %>% 
+  mutate(mean.ht = mean(height, na.rm = TRUE), sum.ht = sum(height, na.rm = TRUE),
+            best.ht = max(height, na.rm = TRUE), num_planted = n(), survived = sum(!is.na(height))) %>% 
+  mutate(survival.rate = round((survived/num_planted*100),0)) %>% 
   mutate(best.ht = replace(best.ht, best.ht == '-Inf', 0)) %>% 
-  mutate(mean.ht = replace(mean.ht, is.na(mean.ht), 0)) %>%
+  mutate(mean.ht.survived = replace(mean.ht, is.na(mean.ht), 0)) %>%
+  mutate(mean.ht.survived = round(mean.ht.survived, 2)) %>%
   ungroup %>%
-  group_by(Site, Sp) %>%
-  mutate(best.perform = max(sum.ht)) %>% ungroup %>% 
-  data.frame %>%
-  mutate(mean.perform = round((best.perform/planted),2)) %>% 
-  mutate(rating = ifelse(mean.perform > 4 & survival > 75, "1_Excellent",
-                  ifelse(mean.perform > 2.0 & survival > 66, "2_Good",
-                  ifelse(mean.perform > 1.5 | survival > 75, "3_Fair",
-                  ifelse(survival >30,
-                         "4_Poor","5_Fail")))))
+  group_by(Site, Stock_ID) %>%
+  mutate(best.perform = max(sum.ht)) %>% 
+  mutate(mean.perform = round((best.perform/num_planted),2)) %>% 
+  mutate(rating = ifelse(mean.perform > 4 & survival.rate > 75, "1_Excellent",
+                  ifelse(mean.perform > 2.0 & survival.rate > 66, "2_Good",
+                  ifelse(mean.perform > 1.5 | survival.rate > 75, "3_Fair",
+                  ifelse(survival.rate >25,
+                         "4_Poor","5_Fail"))))) %>% ungroup %>% data.frame
+  ratinglist <- list()
+  i=0
+  for (sp in unique(trees$Sp)){
+    i=i+1
+    spp.qual <- trees %>% filter(Sp == sp)
+   qual.ht <- qual.rate %>% filter(spp == sp)
+   spp.qual <- left_join(spp.qual, qual.ht, by = c("Sp" = "spp"))
+   spp.qual <- spp.qual %>% mutate(rating_new = ifelse(mean.ht.survived > S, 0, 
+                                                       ifelse (mean.ht.survived > E, 1,
+                                                               ifelse(mean.ht.survived > G, 2,
+                                                                      ifelse(mean.ht.survived > F, 3,
+                                                                             ifelse(mean.ht.survived > P, 4, 
+                                                                                    ifelse(survival.rate >0.25, 4, 5 )))))))
+    spp.qual <- spp.qual %>% mutate(rating_new = ifelse(survival.rate <75 & survival.rate >= 50, rating_new+1,
+                                                        ifelse (survival.rate <50, rating_new+2, rating_new)))
+    spp.qual <- spp.qual %>% mutate(rating_new = ifelse(rating_new >5, 5, rating_new))
+                                                        
+    spp.qual <- spp.qual %>% mutate(rating_new = ifelse(rating_new == 5 & survival.rate >=25, 4, rating_new))
+  ratinglist[[i]] <- spp.qual
+  }
+
+trees2 <- do.call("rbind",ratinglist)
 sites <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", 
                             sheet = "sites") %>% 
   select(Site, SiteName, BECvar, LONG_S, LAT_S) %>% rename(longitude = LONG_S, latitude = LAT_S) %>%
   filter(!Site %in% c("0", "9999", "x")) %>% 
   mutate(Site = as.factor(Site))
-trials.all <- trees %>% select(Site, Sp, Seedlot_label, mean.perform, rating) %>% 
+trials.all <- trees2 %>% select(Site, Sp, Seedlot_label, plantingyear, assessment_date_qual, num_planted, best.ht, mean.ht.survived, survival.rate, mean.perform, rating, rating_new ) %>% mutate (assessor_name_qual = "Data") %>% 
   left_join(sites) %>% arrange(Sp)
 fwrite(trials.all, "./clean_data/AMAT_10year_all_assessed.csv")
-best.Stock_ID <- trials.all  %>% group_by(Site, Sp) %>% slice_max(mean.perform, n=1, with_ties = FALSE) %>% ungroup %>% distinct %>% data.frame
-xx <- trees %>% filter(Sp ==  'Lw')
-fwrite(best.Stock_ID, "./clean_data/AMAT_10year_best_Stock_ID.csv")
+best.Stock_ID <- trials.all  %>% group_by(Site, Sp) %>% slice_min(rating_new, n=1, with_ties = FALSE) %>% ungroup %>% distinct %>% data.frame %>% filter(!is.na(rating_new)) 
+best.Stock_ID$rating_new <-  recode(best.Stock_ID$rating_new, "0" = "0_Superior", "1" = "1_Excellent", "2" = "2_Good", "3" = "3_Fair", "4" = "4_Poor", "5" = "5_Fail")
+#xx <- trials.all %>% filter(Site == "KITS", Sp ==  'Lw')
+fwrite(best.Stock_ID, "./clean_data/AMAT_10year_best_Stock_ID_new.csv")
 ```
 
 ```{r map function, echo=FALSE}
@@ -131,8 +157,8 @@ map_intense <- ggplot() +
   geom_sf(data = basemap, color = "grey 70", fill = "grey 95", size = 1)  +
   theme_light()+
 geom_point(data = trial.loc2, size = 2, aes(X,Y, colour = rating, shape = rating), show.legend = TRUE) +
-  scale_colour_manual(drop = FALSE, values = c('purple', 'green', 'orange', 'red', 'black'))+
-  scale_shape_manual(drop=FALSE, values = c(17, 16, 15, 25, 4), )+
+  scale_colour_manual(drop = FALSE, values = c("deeppink", 'purple', 'green', 'orange', 'red', 'black'))+
+  scale_shape_manual(drop=FALSE, values = c(17, 17, 16, 15, 25, 4), )+
   ggrepel::geom_text_repel(data = trial.loc2, mapping = aes(X, Y, label = SiteName),
                   box.padding   = 0.1,
                   point.padding = 0.1,
@@ -158,7 +184,7 @@ Maps for each tree species showing the performance rating for the best performin
 
 ```{r map distribution of best performing Stock_ID ratings, echo=FALSE, error = FALSE, warning=FALSE, message=FALSE}
 
-trial.dat <- fread("./clean_data/AMAT_10year_best_Stock_ID.csv")
+trial.dat <- fread("./clean_data/AMAT_10year_best_Stock_ID_new.csv") %>% select(-rating) %>% rename(rating = rating_new)
 map <- st_read("D:/CommonTables/BC_AB_US_Shp/WNA_State_Boundaries.gpkg", layer = "WNA_State_Boundaries", quiet = TRUE)
 st_crs(map) <- 3005
 spp.codes = "At"

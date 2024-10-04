@@ -1,0 +1,128 @@
+---
+title: "Import and analyse long-term plot data"
+author: "Will MacKenzie"
+date: "2022-08-03"
+output: html_document
+---
+Qualitative ratings of performance are generated from survival and height data collected from long-term trials. The best performing seedlots for each species is identified by selecting the seedlots with max(sum of heights). The single metric balances survival and growth. 
+A mean performance is calculated by dividing the sum of heights by the number of trees planted. The rating is used to classify the performance of the seedlots into five qualitative performance categories: 
+Excellent - >4.0m MP), 
+Good - 4.0-3.1 MP), 
+Fair - (3.0-2.1 MP), 
+Poor - 2.0-1 MP, 
+Fail - <1.0 MP).
+The best performing seedlots are mapped to show the distribution of the qualitative rating for species across the trial sites.
+
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(sf)
+require(data.table)
+require(tidyverse)
+require(terra)
+require(fasterize)
+library(readr)
+library(rmapshaper)
+require(tictoc)
+require(ggplot2)
+require(forcats)
+require(knitr)
+require(data.table)
+require(vegan)
+require(ggpubr)
+require(ggrepel)
+source("./_functions/doc_theme_pem.R")
+
+```
+
+```{r import AMAT trial data and clean, echo=FALSE}}
+dead = c(".", "..", "", "0", "9999", "x")
+data1 <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "growth")
+data1 <- data1 %>% select(Site, Sp, SLnum, Rep, HT10) %>%
+  mutate(SLnum = as.factor(SLnum)) %>%
+  mutate(Seedlot = paste0(Sp, "-", SLnum)) %>%
+  mutate(HT10 = ifelse(HT10 %in% dead, 0, HT10)) %>%
+  #filter(!HT10 %in% dead) %>%
+  mutate(HT10 = as.numeric(HT10)) %>%
+  mutate(height = ifelse(HT10 == 0, NA, HT10/100)) %>%
+  mutate(height = round(height, 2))
+  #mutate_if(is.character, as.factor) %>%%>% droplevels()# %>% rowid_to_column("ID")
+fwrite(data1, "./clean_data/AMAT_10year.csv" )
+
+```
+
+```{r import spreadsheet data and export for SiteTools}
+data1 <- fread("./clean_data/AMAT_10year.csv")
+trees <- data1 %>% 
+  select(Site, Sp, Seedlot, HT10, height) %>% 
+  group_by(Site, Sp, Seedlot) %>% 
+ #   summarise(planted = n(), survived = sum(!is.na(height))) %>% 
+  summarise(mean.ht = mean(height, na.rm = TRUE), sum.ht = sum(height, na.rm = TRUE),
+            best.ht = max(height, na.rm = TRUE), planted = n(), survived = sum(!is.na(height))) %>% 
+  mutate(survival = round((survived/planted*100),0)) %>% 
+  mutate(best.ht = replace(best.ht, best.ht == '-Inf', 0)) %>% 
+  mutate(mean.ht = replace(mean.ht, is.na(mean.ht), 0)) %>%
+
+              ungroup %>%
+  group_by(Site, Sp) %>%
+  mutate(best.perform = max(sum.ht)) %>% ungroup %>% 
+  data.frame %>%
+  filter(sum.ht == best.perform) %>%
+  mutate(mean.perform = round((best.perform/planted),2)) %>% 
+  mutate(rating = ifelse(mean.perform > 4, "1_Excellent",
+                         ifelse(mean.perform > 2.0 & survival > 66, "2_Good",
+                                ifelse(mean.perform > 1.5 | survival > 75, "3_Fair",
+                                     ifelse((mean.perform >1 & survival >25) | survival >50, "4_Poor","5_Fail")))))
+sites <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "sites") %>% 
+  select(Site, SiteName, BECvar, LONG_S, LAT_S) %>% rename(longitude = LONG_S, latitude = LAT_S) %>%
+  filter(!Site %in% c("0", "9999", "x")) %>% 
+  mutate(Site = as.factor(Site))
+best.seedlot <- trees %>% select(Site, Sp, mean.perform, rating) %>% group_by(Site, Sp) %>% slice_max(mean.perform, n=1) %>% ungroup %>% distinct %>% data.frame
+trial.dat <- left_join(best.seedlot, sites) 
+
+fwrite(trial.dat, "./clean_data/AMAT_10year_best_seedlot.csv")
+```
+
+## Draw a map of the best performing seedlots for each species
+```{r}
+trial.map <- function(dat = trial.dat, spp, basemap = map){
+trial.dat1 <- trial.dat %>% mutate_if(is.character, as.factor) %>% filter(Sp %in% spp)
+trial.loc <- st_as_sf(trial.dat1, coords=c("longitude", "latitude"), crs = 4326)
+trial.coords <- st_transform(trial.loc, crs= st_crs(basemap)) %>% st_coordinates() %>% as.data.frame
+trial.loc2 <- as.data.frame(trial.loc) %>% cbind(trial.coords) # convert back to data.frame for ggplot
+map_intense <- ggplot() +
+  geom_sf(data = basemap, color = "grey 70", fill = "grey 95", size = 1)  +
+  theme_light()+
+geom_point(data = trial.loc2, size = 2, aes(X,Y, colour = rating, shape = rating), show.legend = TRUE) +
+  scale_colour_manual(drop = FALSE, values = c('purple', 'green', 'orange', 'red', 'black'))+
+  scale_shape_manual(drop=FALSE, values = c(17, 16, 15, 25, 4), )+
+  ggrepel::geom_text_repel(data = trial.loc2, mapping = aes(X, Y, label = SiteName),
+                  box.padding   = 0.35,
+                  point.padding = 0.5,
+                  segment.color = 'grey10',
+                  size = 2)+
+  #geom_text()+
+  labs(title = paste0(spp, " trial locations"), x="longitude",  y="latitude")
+#map_intense
+print(map_intense)  
+ggsave(paste0("./maps/", spp, " AMAT performance.pdf"))
+#return(map_intense)
+}
+
+
+```
+
+
+```{r map of performance}
+
+trial.dat <- fread("./clean_data/AMAT_10year_best_seedlot.csv")
+map <- st_read("D:/CommonTables/BC_AB_US_Shp/WNA_State_Boundaries.gpkg")
+st_crs(map) <- 3005
+#spp.codes = "At"
+spp.codes = unique(trial.dat$Sp)
+for (spp in spp.codes){
+   trial.map(trial.dat, spp, map)
+}
+#dist.map(trial.dat, "Py", map)
+```
+
