@@ -31,15 +31,15 @@ execute:
   fig.path: "./figures/"
 ---
 
-Qualitative ratings of performance are generated from survival and height data collected from long-term trials. The best performing Stock_IDs for each species is identified by selecting the Stock_IDs with max(sum of heights). The single metric balances survival and growth. A mean performance (MP) is calculated by dividing the sum of heights by the number of trees planted. The rating is used to classify the performance of the Stock_IDs into five qualitative performance categories:
+Qualitative ratings of performance are generated from survival and height data collected from long-term trials. The best performing Stock_IDs for each species is identified by selecting the Stock_IDs with max(sum of heights). The single metric balances survival and growth. A mean performance (MP) is calculated by dividing the sum of heights by the number of trees planted. The rating is used to classify the performance of the Stock_IDs into six qualitative performance categories:
 
--   Superior - SI50 >40 and survival >75%,
+-   Superior - mean SI50 >40 & survival >75%,
 
--   Excellent - SI50>30 and survival >75% or SI50 >40 and survival 50-75%,
+-   Excellent - mean SI50 >30 & survival >75% OR mean SI50 >40 & survival 50-75%,
 
--   Good - SI50>20 and survival >75% or SI50 >30 and survival 50-75%, or SI50 >40 and survival 25 - 50%,
+-   Good - mean SI50 >20 & survival >75% OR mean SI50 >30 & survival 50-75%, OR mean SI50 >40 & survival 25 - 50%,
 
--   Fair - SI50>10 and survival >75% or SI50 >20 and survival 25 - 50%, or SI50 >30 and survival 25 - 50%,
+-   Fair - mean SI50 >10 & survival >75% or mean SI50 >20 & survival 25 - 50%, or mean SI50 >30 & survival 25 - 50%,
 
 -   Poor - survival \>25%,
 
@@ -123,9 +123,10 @@ trees <- data1 %>%
                                                                ifelse(mean.ht.survived > G, 2,
                                                                       ifelse(mean.ht.survived > F, 3,
                                                                              ifelse(mean.ht.survived > P, 4, 
-                                                                                    ifelse(survival.rate >0.25, 4, 5 )))))))
+                                                                                    ifelse(survival.rate >25, 4, 5 )))))))
     spp.qual <- spp.qual %>% mutate(rating_new = ifelse(survival.rate <75 & survival.rate >= 50, rating_new+1,
-                                                        ifelse (survival.rate <50, rating_new+2, rating_new)))
+                                                        ifelse (survival.rate <50 & survival.rate >= 25, rating_new+2, 
+                                                                ifelse (survival.rate <25, rating_new+3, rating_new))))
     spp.qual <- spp.qual %>% mutate(rating_new = ifelse(rating_new >5, 5, rating_new))
                                                         
     spp.qual <- spp.qual %>% mutate(rating_new = ifelse(rating_new == 5 & survival.rate >=25, 4, rating_new))
