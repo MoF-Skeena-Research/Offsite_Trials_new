@@ -1,0 +1,124 @@
+---
+title: "GoM assessment data import"
+author: "WHMackenzie"
+date: "2025-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(readxl)
+library(tidyverse)
+require(gt)
+# Define the target values for A1 position
+target_values <- c("NW", "N", "NE", "E", "SE", "S", "SW", "W")
+```
+Import trees from the GoM assessment form
+need to adjust to include block id as column in tree data
+And then turn function such that it reads through all spreadsheets in a folder
+```{r}
+library(readxl)
+library(dplyr)
+library(purrr)
+
+process_excel_folder_recursive <- function(folder_path, target_values = c("NW", "N", "NE", "E", "SE", "S", "SW", "W")) {
+  # Get all Excel files in the folder and subfolders
+  file_list <- list.files(folder_path, pattern = "\\.xlsx$", full.names = TRUE, recursive = TRUE)
+
+  # Initialize an empty list to store processed data
+  all_data <- list()
+
+  # Loop through each file
+  for (file_path in file_list) {
+    # Read the Block_ID from the "Block info" sheet (cell B2)
+    sheets <- excel_sheets(file_path)
+    
+    if ("Block info" %in% sheets) {
+      Block_ID <- read_excel(file_path, sheet = "Block info", range = "B1", col_names = FALSE)[[1]]
+    } else {
+      Block_ID <- NA  # If "Block info" sheet is missing, assign NA
+    }
+  # Print Block_ID for each file
+    cat("Processing file:", file_path, "\nBlock_ID:", Block_ID, "\n")
+
+    # Function to check if the first cell (A1) contains a target value
+    filter_sheets <- function(sheet_name) {
+      first_cell <- read_excel(file_path, sheet = sheet_name, range = "A1", col_names = FALSE)
+      return(!is.na(first_cell[[1]]) && first_cell[[1]] %in% target_values)
+    }
+
+    # Filter sheets based on A1 contents and remove unwanted sheets
+    valid_sheets <- Filter(filter_sheets, sheets)
+    valid_sheets <- valid_sheets[!valid_sheets %in% c("BlankSppAssessment")]
+    # remove any sheets that begin with "Spp"
+    valid_sheets <- valid_sheets[!grepl("^Spp", valid_sheets)]
+
+    # Import valid sheets and read the desired range
+    data_list <- lapply(valid_sheets, function(sheet) {
+      df <- read_excel(file_path, sheet = sheet, range = "B2:F6", col_names = FALSE)
+      df_long <- df %>%
+        pivot_longer(cols = everything(), names_to = "column", values_to = "value") %>%
+        filter(!is.na(value)) %>%
+        mutate(Block_ID = Block_ID,  # Add Block_ID from "Block info" sheet
+               species = sheet,  # Add sheet name
+               vigour = substr(value, 1, 1),
+               notes = substr(value, 2, nchar(value))) %>%
+        select(Block_ID, species, vigour, notes)
+      return(df_long)
+    })
+
+    # Combine data from current file and store in the list
+    all_data <- append(all_data, data_list)
+  }
+
+  # Combine all processed data across multiple files and subfolders
+  Trees <- bind_rows(all_data)
+
+  # Print results
+  print(Trees)
+
+  return(Trees)
+}
+
+# Usage example
+folder_path <- "./raw_data/"
+Trees <- process_excel_folder_recursive(folder_path)
+```
+```{r}
+# Count of unique Block_IDs
+no_blocks_assessed <- Trees %>%
+  distinct(Block_ID) %>%
+  nrow()
+# Count of unique Block_IDs + species
+assessed <- Trees %>% mutate(vigour_value = ifelse(vigour == "P", 1, 
+                                                   ifelse(vigour == "F", 2, 
+                                                          ifelse(vigour == "G", 3,
+                                                                 ifelse(vigour == "E", 4, 0))))) %>%
+  mutate(survival = ifelse(vigour_value == 0, 0, 1)) %>%
+  group_by(Block_ID, species) %>%
+  summarize(count = n(), mean_vig = mean(vigour_value), survival = (sum(survival)/count), .groups = "drop") %>% 
+  mutate(performance = ifelse(mean_vig >= 3.5, "Excellent", 
+                              ifelse(mean_vig >= 2.5, "Good", 
+                                     ifelse(mean_vig >= 1.5, "Fair", 
+                                            ifelse(mean_vig >= 0.5, "Poor", 
+                                                   ifelse(mean_vig < 0.5, "Fail", "Fail"))))))
+
+# gt summary table of assessed
+assessed %>%
+  gt() #%>%
+  # tab_header(
+  #   title = "Summary of assessed trees"
+  # ) %>%
+  # cols_label(
+  #   Block_ID = "Block ID",
+  #   n_species = "Number of species",
+  #   mean_vig = "Mean vigour"
+  # ) %>%
+  # fmt_number(
+  #   columns = vars(mean_vig),
+  #   decimals = 2
+  # )
+
+
+
+```
+
