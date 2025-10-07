@@ -37,7 +37,7 @@ source("./_functions/doc_theme_pem.R")
 
 ```{r import AMAT trial data and clean, echo=FALSE}}
 dead = c(".", "..", "", "0", "9999", "x")
-data1 <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "growth")
+data1 <- readxl::read_excel("./raw_data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "growth")
 data1 <- data1 %>% select(Site, Sp, SLnum, Rep, HT10) %>%
   mutate(SLnum = as.factor(SLnum)) %>%
   mutate(Seedlot = paste0(Sp, "-", SLnum)) %>%
@@ -47,12 +47,12 @@ data1 <- data1 %>% select(Site, Sp, SLnum, Rep, HT10) %>%
   mutate(height = ifelse(HT10 == 0, NA, HT10/100)) %>%
   mutate(height = round(height, 2))
   #mutate_if(is.character, as.factor) %>%%>% droplevels()# %>% rowid_to_column("ID")
-fwrite(data1, "./clean_data/AMAT_10year.csv" )
+fwrite(data1, "./clean_data/AMAT_10year_2.csv" )
 
 ```
 
 ```{r import spreadsheet data and export for SiteTools}
-data1 <- fread("./clean_data/AMAT_10year.csv")
+data1 <- fread("./clean_data/AMAT_10year_2.csv")
 trees <- data1 %>% 
   select(Site, Sp, Seedlot, HT10, height) %>% 
   group_by(Site, Sp, Seedlot) %>% 
@@ -73,14 +73,14 @@ trees <- data1 %>%
                          ifelse(mean.perform > 2.0 & survival > 66, "2_Good",
                                 ifelse(mean.perform > 1.5 | survival > 75, "3_Fair",
                                      ifelse((mean.perform >1 & survival >25) | survival >50, "4_Poor","5_Fail")))))
-sites <- readxl::read_excel("./data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "sites") %>% 
+sites <- readxl::read_excel("./raw_data/AMAT_MASTERDATA_ver_14.xlsx", sheet = "sites") %>% 
   select(Site, SiteName, BECvar, LONG_S, LAT_S) %>% rename(longitude = LONG_S, latitude = LAT_S) %>%
   filter(!Site %in% c("0", "9999", "x")) %>% 
   mutate(Site = as.factor(Site))
 best.seedlot <- trees %>% select(Site, Sp, mean.perform, rating) %>% group_by(Site, Sp) %>% slice_max(mean.perform, n=1) %>% ungroup %>% distinct %>% data.frame
 trial.dat <- left_join(best.seedlot, sites) 
 
-fwrite(trial.dat, "./clean_data/AMAT_10year_best_seedlot.csv")
+fwrite(trial.dat, "./clean_data/AMAT_10year_best_seedlot_2.csv")
 ```
 
 ## Draw a map of the best performing seedlots for each species
@@ -115,7 +115,7 @@ ggsave(paste0("./maps/", spp, " AMAT performance.pdf"))
 
 ```{r map of performance}
 
-trial.dat <- fread("./clean_data/AMAT_10year_best_seedlot.csv")
+trial.dat <- fread("./clean_data/AMAT_10year_best_seedlot_2.csv")
 map <- st_read("D:/CommonTables/BC_AB_US_Shp/WNA_State_Boundaries.gpkg")
 st_crs(map) <- 3005
 #spp.codes = "At"

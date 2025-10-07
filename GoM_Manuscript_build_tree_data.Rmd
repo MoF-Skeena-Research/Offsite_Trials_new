@@ -1,0 +1,219 @@
+---
+title: "Compile tree plot data"
+author: "WHMackenzie"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = FALSE)
+require(mapview)
+require(rasterVis) 
+require(ggplot2)
+require(sf)
+require(fasterize)
+require(purrr)
+require(parallel)
+require(tmap)
+require(tidyverse)
+require(data.table)
+require(DBI)
+require(climr)
+require(tictoc)
+```
+
+Taxonomy library
+
+```{r}
+sppmaster <- dbConnect(odbc::odbc(), .connection_string = "Driver={Microsoft Access Driver (*.mdb, *.accdb)}; DBQ=D:/OneDrive/BCSpeciesList/SpeciesTaxonomyMasterSept2025.accdb;")
+taxon.all  <- dbReadTable(sppmaster, "USysAllSpecs")
+dbDisconnect(sppmaster)
+#taxon.all <- fread("D:/CommonTables/SpeciesMaster/SpeciesMaster01Dec2020.csv", header = T, stringsAsFactors = F, strip.white = T)
+sppmaster <- taxon.all %>% filter(Codetype %in% c("U", "D")) %>% dplyr::select(-ID) %>% as.data.table %>% mutate(Species = Code)
+taxon.lookup <- taxon.all %>% filter(Codetype == "U" | Codetype == "S" ) %>% dplyr::select(-ID) %>% mutate(Species = Code) ## only currently accepted codes
+taxon.excluded <- taxon.all %>% filter(Codetype == c("X")) %>% dplyr::select(-ID) %>% mutate(Species = Code)
+taxon.lifeforms <- taxon.lookup %>% filter(Codetype == "U") %>% dplyr::select(Species, Lifeform) %>% distinct
+trees <- sppmaster %>% filter(!is.na(TreeCode)) %>% dplyr::select(Code, ScientificName, TreeCode ) %>% distinct
+tree.codes <- trees %>% dplyr::select(Code, TreeCode) %>% distinct
+fwrite(tree.codes, "./clean_data/Tree_Species_Codes.csv")
+```
+
+#### Import all tree plot location data
+
+```{r set folders, include=FALSE}
+require(DBI) #loads odbc as well
+becmaster <- dbConnect(odbc::odbc(), .connection_string = "Driver={Microsoft Access Driver (*.mdb, *.accdb)}; DBQ=D:/BECMaster/BECMaster_fixing.accdb;")
+bec.env <- dbReadTable(becmaster, "BECMaster_fixing_Env") %>% mutate(Longitude = ifelse(Longitude<0, Longitude, 0-Longitude)) %>% mutate(Date = as_date(Date))
+bec.info <- dbReadTable(becmaster, "BECMaster_fixing_Admin")
+bec.veg <- dbReadTable(becmaster, "BECMaster_fixing_Veg")
+dbDisconnect(becmaster)
+bc.trees <- bec.veg %>% filter(Species %in% trees$Code) %>% left_join(bec.env)%>% dplyr::select(PlotNumber, Species, Latitude, Longitude, Elevation) %>% filter(!is.na(Latitude), !is.na(Longitude)) %>% distinct
+bc.trees <- bc.trees %>%  filter(!(Species == "LARIOCC" & Longitude < (-121)))  # remove eastern larch plots
+lw.bc <- bc.trees %>% filter(Species == "LARIOCC")
+
+ usamaster <- dbConnect(odbc::odbc(), .connection_string = "Driver={Microsoft Access Driver (*.mdb, *.accdb)}; DBQ=E:/Vpro19_Data/USA_BEC_Vpro19.accdb;")
+usa.env <- dbReadTable(usamaster, "USABEC_Env") %>% mutate(Longitude = ifelse(Longitude<0, Longitude, 0-Longitude)) %>% mutate(Date = as_date(Date))
+usa.info <- dbReadTable(usamaster, "USABEC_Admin")
+usa.veg <- dbReadTable(usamaster, "USABEC_Veg")
+dbDisconnect( usamaster)
+usa.trees <- usa.veg %>% filter(Species %in% trees$Code) %>% left_join(usa.env)%>% dplyr::select(PlotNumber, Species, Latitude, Longitude, Elevation) %>% filter(!is.na(Latitude), !is.na(Longitude)) %>% distinct
+
+## Alberta
+ab.plot <- fread("E:/Vpro19_Data/AlbertaEcoData/Plots_fixed.csv") %>%
+  filter(!is.na(LONGITUDE), !is.na(LATITUDE)) %>%
+  mutate(Longitude = ifelse(LONGITUDE < 0, LONGITUDE, -LONGITUDE),
+         Latitude = LATITUDE, Elevation = ELEVATION,PlotNumber = `FIELD PLOT NUMBER`) %>% filter(!is.na(Latitude), !is.na(Longitude))
+
+ab.trees <- fread("E:/Vpro19_Data/AlbertaEcoData/VegetationSpecies_fixed.csv") %>%
+  mutate(PlotNumber = `FIELD PLOT NUMBER`,
+         Species = `SPECIES CODE`) %>%
+  filter(Species %in% trees$Code) %>% left_join(ab.plot) %>%
+  dplyr::select(PlotNumber, Species, Latitude, Longitude, Elevation) %>% distinct
+
+all.trees <- bind_rows(bc.trees, usa.trees, ab.trees) %>% distinct %>% mutate(Species = gsub("[0-9]+$", "", Species)) 
+
+```
+
+Add climr data to plots
+
+```{r}
+tree.climate <- all.trees %>% as_tibble() %>% arrange(PlotNumber) %>% dplyr::mutate(id = row_number())
+my_points <- tree.climate %>% dplyr::select(lat = Latitude, lon=Longitude, elev = Elevation, id) %>% na.omit %>% as.data.table
+tic()
+clim_dat <- downscale(
+  xyz = my_points, 
+  return_refperiod = TRUE,
+  #which_refmap = "auto", 
+ vars=list_vars())
+toc()
+tree.climate2 <- left_join(tree.climate, clim_dat) %>% left_join(tree.codes, by = c("Species" = "Code")) %>% drop_na() %>% 
+  mutate(species = TreeCode)
+fwrite(tree.climate2, "./clean_data/Tree_Plot_Climate.csv")
+```
+check distribution and add in coastal designation
+
+```{r}
+library(sf)
+library(dplyr)
+library(data.table)
+
+# Convert to sf object in WGS84
+tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326)
+
+# Extract original coordinates (WGS84) before transformation
+coords_wgs84 <- st_coordinates(tree.sf)
+tree.sf$Longitude <- coords_wgs84[, "X"]
+tree.sf$Latitude <- coords_wgs84[, "Y"]
+
+# Read BGC layer and ensure CRS is set
+bgc <- st_read("D:/OneDrive - Government of BC/BECdb_Working/BECv13_for_checkin/BGCv13_7_final.gpkg", crs = 3005)
+st_crs(bgc) <- 3005
+
+# Transform tree points to match BGC CRS for spatial join
+tree.sf <- st_transform(tree.sf, crs = 3005)
+
+# Join BGC info
+tree.sf <- st_join(tree.sf, bgc["BGC"]) %>% mutate(BGC = as.factor(BGC))
+
+# Final data frame with original lat/lon retained
+tree.climate2 <- tree.sf %>%
+  st_drop_geometry() %>%
+  as.data.frame() %>%
+  mutate(
+    CoastInterior = case_when(
+      grepl("CWH|MH|CDF|CRF", BGC) ~ "Coastal",
+      TRUE ~ "Interior"
+    ),
+    Species = as.factor(Species)
+  ) %>%
+  dplyr::select(CoastInterior, BGC, Longitude, Latitude, everything())
+
+# Write to CSV
+fwrite(tree.climate2, "./clean_data/Tree_Plot_Climate.csv")
+```
+
+import all GoM trial data and summarize by species by year
+
+```{r}
+library(lubridate)
+
+gom.trials <- fread("./clean_data/GOM_Trials_2023_24.csv") %>%
+  mutate(
+    longitude = ifelse(longitude < 0, longitude, -longitude),
+    latitude = latitude,
+    PlotNumber = ep_trial_id,
+    species = species,
+    year_established = year(ymd(date_established))
+  ) %>%
+  filter(!is.na(latitude), !is.na(longitude)) %>% 
+  dplyr::select(plantation_id, PlotNumber, year_established, species = species, latitude = latitude, longitude = longitude, elevation)
+
+gom.trials.2025 <- fread("D:/OneDrive - Government of BC/OffSite-Trials/3_Guinessometrics/GOM/2025/Data/planting_info_202510060759.csv") %>% 
+  mutate(PlotNumber = paste0(block_id, "_", species)) %>% filter(!plantation_id %in% gom.trials$plantation_id)
+## add trials from 2025 data not matching gom.trials plantation_id
+gom.trials.2025 <- gom.trials.2025  %>%
+  mutate(longitude = ifelse(longitude < 0, longitude, -longitude),
+         latitude = latitude,
+          year_established = year(ymd(date_established))) %>% 
+  dplyr::select(plantation_id, PlotNumber, year_established, species = species, latitude = latitude, longitude = longitude, elevation)
+
+gom.trials <- bind_rows(gom.trials, gom.trials.2025, hardy.surveys) %>% distinct %>%
+  filter(!is.na(latitude), !is.na(longitude)) %>%
+  mutate(species = ifelse(grepl("Fdi|Fdc", species), "Fd", species))
+fwrite(gom.trials, "./clean_data/gom_trials_compiled.csv")
+```
+
+
+add climr to gom.trials
+``` {r}
+plot.loc = gom.trials
+plot_locations <- st_as_sf(plot.loc, coords = c("longitude", "latitude"), crs = 4269)
+plot_locations <- st_transform(plot_locations, 3005)
+st_crs(plot_locations) <- 3005
+elevation <- terra::rast("D:/OneDrive - Government of BC/CommonTables/DEMs/BC_25m_DEM.tif")
+elevation.pts <- terra::extract(elevation, plot_locations, bind = TRUE) %>% as.data.frame
+gom.trials2 <- left_join(as.data.frame(gom.trials), elevation.pts) %>% dplyr::mutate(id = row_number())%>%
+  dplyr::select(PlotNumber, species, longitude, latitude, elevation = BC_25m_DEM, id)
+my_points <- gom.trials2 %>% dplyr::select(lat = latitude, lon=longitude, elev = elevation, id) %>% na.omit %>% as.data.table
+tic()
+clim_dat <- downscale(
+  xyz = my_points,
+  return_refperiod = TRUE,
+  #which_refmap = "auto",
+ vars=list_vars())
+toc()
+gom.climate2 <- left_join(gom.trials2, clim_dat) %>% drop_na()
+fwrite(gom.climate2, "./clean_data/GoM_trial_climate.csv")
+
+```
+
+add climr to assessed.gom.trials
+``` {r}
+gom.trials <- fread("./clean_data/GoM_assessed_trials_2023_24.csv") %>% rename(longitude = Block_long, latitude = Block_lat, species = species, PlotNumber = Block_ID)
+
+plot.loc = gom.trials
+plot_locations <- st_as_sf(plot.loc, coords = c("longitude", "latitude"), crs = 4269)
+plot_locations <- st_transform(plot_locations, 3005)
+st_crs(plot_locations) <- 3005
+elevation <- terra::rast("D:/OneDrive - Government of BC/CommonTables/DEMs/BC_25m_DEM.tif")
+elevation.pts <- terra::extract(elevation, plot_locations, bind = TRUE) %>% as.data.frame
+gom.trials2 <- left_join(as.data.frame(gom.trials), elevation.pts) %>% dplyr::mutate(id = row_number())%>%
+  dplyr::select(PlotNumber, species, performance, longitude, latitude, elevation = BC_25m_DEM, id)
+my_points <- gom.trials2 %>% dplyr::select(lat = latitude, lon=longitude, elev = elevation, id) %>% na.omit %>% as.data.table
+tic()
+clim_dat <- downscale(
+  xyz = my_points, 
+  return_refperiod = TRUE,
+  #which_refmap = "auto", 
+ vars=list_vars())
+toc()
+gom.climate2 <- left_join(gom.trials2, clim_dat) %>% drop_na()
+fwrite(gom.climate2, "./clean_data/GoM_assessed_climate.csv")
+
+```
+
+
+
+
+
+

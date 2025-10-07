@@ -1,0 +1,297 @@
+---
+title: "GoM_manuscript_graphics"
+author: "WHMackenzie"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = FALSE)
+require(mapview)
+require(rasterVis) 
+require(ggplot2)
+require(sf)
+require(fasterize)
+require(purrr)
+require(parallel)
+require(tmap)
+require(tidyverse)
+require(data.table)
+require(DBI)
+require(climr)
+require(tictoc)
+```
+
+```{r}
+tree.codes <- fread("./clean_data/Tree_Species_Codes.csv")
+```
+
+```{r}
+##Summary of GoM trials
+library(dplyr)
+library(tidyr)
+library(gt)
+gom.trials <- fread("./clean_data/gom_trials_compiled.csv")
+# Step 1: Create the main summary table
+gom.trials.summary <- gom.trials %>%
+  group_by(species, year_established) %>%
+  tally(name = "n") %>%
+  pivot_wider(
+    names_from = year_established,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  ungroup()
+
+# Step 2: Reorder year columns numerically
+year_cols <- sort(setdiff(names(gom.trials.summary), "species"))
+
+gom.trials.summary <- gom.trials.summary %>%
+  select(species, all_of(year_cols)) %>%
+  mutate(Total_Trials = rowSums(across(all_of(year_cols)))) %>%
+  relocate(Total_Trials, .after = last_col()) %>%
+  arrange(species)
+
+# Step 3: Create a summary row for column totals
+column_totals <- gom.trials.summary %>%
+  summarise(across(all_of(year_cols), sum)) %>%
+  mutate(
+    species = "Total",
+    Total_Trials = sum(across(all_of(year_cols)))
+  ) %>%
+  select(names(gom.trials.summary))  # ensure column order matches
+
+# Step 4: Bind the summary row to the bottom
+gom.trials.summary <- bind_rows(gom.trials.summary, column_totals)
+
+# Step 5: Render with gt
+gt::gt(gom.trials.summary) %>%
+  tab_header(
+    title = "GoM Trial Summary by Species and Year Established",
+    subtitle = "Number of Trials per Species per Year"
+  ) %>%
+  fmt_number(decimals = 0) %>%
+  cols_label(
+    species = "Species",
+    Total_Trials = "Total Trials"
+  ) %>%
+  opt_align_table_header("left") %>% gtsave(filename = "./graphics/GoM_trial_summary_by_species_year2.png")
+
+fwrite(gom.trials.summary, "./clean_data/GoM_trial_summary_by_species_year.csv")
+```
+
+Assessed trial performance by year
+```{r}
+assessed <- fread( "./clean_data/GoM_assessed_trials_2023_24.csv")
+# Prepare data with counts and percentages
+performance_summary <- assessed %>% filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>% drop_na %>% 
+  count(species, performance, Planted_year) %>%
+  group_by(species, Planted_year) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  ungroup() %>%
+  mutate(performance = factor(performance,
+                              levels = c("Excellent", "Good", "Fair", "Poor", "Fail"),
+                              ordered = TRUE))
+
+# Stacked bar plot with counts and percentage labels
+ggplot(performance_summary, aes(x = species, y = n, fill = performance)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(percent), "%")),
+            position = position_stack(vjust = 0.5),
+            size = 3, color = "black") +
+  theme_minimal() +
+  labs(title = "Performance Distribution by Species in GoM Assessed Trials planted 2023-24",
+       x = "Species",
+       y = "Count of Trials",
+       fill = "Performance") +
+  scale_fill_manual(values = c("Excellent" = "darkgreen",
+                               "Good" = "lightgreen",
+                               "Fair" = "yellow",
+                               "Poor" = "orange",
+                               "Fail" = "red")) +
+  theme(legend.position = "top")+
+  facet_wrap(~Planted_year)
+
+ggsave("./graphics/GoM_assessed_trials_performance_2024_25.png", width = 10, height = 6)
+```
+
+Density graphic of species across climate space
+```{r}
+# Load and filter data
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>%
+  filter(CoastInterior == "Interior", species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>%
+  distinct()#, "Bg""At", "Hw", 
+
+gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
+  filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw"))#,  "Bg""At", "Hw",
+
+WNA.climate <- fread("D:/OneDrive - Government of BC/CommonTables/BGC_climate/WNA_BGCv13_10km.csv") %>%
+  filter(!is.na(MAT), !is.na(MAP), !is.na(MSP), !is.na(MWMT), !is.na(CMD_an), !is.na(DD5_an))
+
+gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
+  filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>% #, "Bg""At", "Hw", 
+  mutate(performance = factor(performance, levels = c("Fail", "Poor", "Fair", "Good", "Excellent")))
+
+# Define performance levels and colors
+performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+performance_colors <- c(
+  "Fail" = "red",
+  "Poor" = "orange",
+  "Fair" = "yellow",
+  "Good" = "green",
+  "Excellent" = "purple")
+
+ggplot(tree.climate2, aes(x = MSP, y = MCMT)) +
+  # Background climate points (grey, no legend)
+  geom_point(data = gom.climate, aes(x = MSP, y = MCMT), color = "grey20", alpha = 0.3, size = 1) +
+
+  # Assessed trials with performance-based coloring
+  geom_point(
+    data = gom.assessed,
+    aes(x = MSP, y = MCMT, color = performance),
+    size = 1.5, shape = 17, alpha = 0.9
+  ) +
+
+  # Density shading
+  geom_hdr(data = tree.climate2, aes(x = MSP, y = MCMT)) +
+  geom_hdr_rug(data = tree.climate2, aes(x = MSP, y = MCMT), sides = "tr", outside = TRUE) +
+
+  # Manual color scale for performance
+  scale_color_manual(
+    values = performance_colors,
+    drop = FALSE,
+    guide = guide_legend(override.aes = list(shape = 17, size = 3))
+  ) +
+
+  # Optional: grayscale fill for density contours
+  #scale_fill_gradient(low = "grey90", high = "grey10") +
+
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ species, ncol = 3) +
+  theme_minimal() +
+  labs(
+    title = "Species-Specific Density Across Climate Space",
+    subtitle = "Western North America",
+    x = "MSP", y = "MCMT"
+  )
+
+ggsave("./graphics/Species_Climate_Density_w_GoM.png", width = 8, height = 10)
+
+```
+
+
+```{r}
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv")
+tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  left_join(tree.codes, by = c("Species" = "Code"))
+
+gom.sf <- st_as_sf(gom.climate, coords = c("longitude", "latitude"), crs = 4326) %>%
+  filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py"))
+
+provmap <- st_read("D:/OneDrive - Government of BC/CommonTables/BC_AB_US_Shp/BC_Province_Outline_Dissolved.gpkg")
+
+gom.assessed <- fread("./clean_data/GoM_assessed_trials_2023_24.csv")
+gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("Block_long", "Block_lat"), crs = 4326)
+
+# Define performance levels and colors
+performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+performance_colors <- c(
+  "Fail" = "red",
+  "Poor" = "orange",
+  "Fair" = "yellow",
+  "Good" = "green",
+  "Excellent" = "purple"
+)
+ sp = "Cw"
+for (sp in unique(gom.sf$species)) {
+  gom_data <- gom.sf %>% filter(species == sp)
+  tree_data <- tree.sf %>% filter(species == sp)
+  assessed_data <- gom.assessed.sf %>%
+    filter(species == sp) %>%
+    mutate(performance = factor(performance, levels = performance_levels))
+
+  # Apply jitter to assessed_data coordinates
+  jittered_coords <- st_coordinates(assessed_data) +
+    matrix(runif(nrow(assessed_data) * 2, -0.03, 0.03), ncol = 2)
+  assessed_data_jittered <- st_as_sf(
+    cbind(assessed_data, jittered_coords),
+    coords = c("X", "Y"),
+    crs = 4326
+  )
+
+  p <- ggplot() +
+    geom_sf(data = provmap, fill = "grey90", color = "black") +
+    geom_sf(data = tree_data, color = "grey50", size = 1, alpha = 0.8, shape = 1) +
+    geom_sf(data = gom_data, color = "grey20", size = 1, alpha = 0.8, shape = 15) +
+    geom_sf(data = assessed_data_jittered, aes(color = performance), size = 3, shape = 17, alpha = 0.9) +
+    scale_color_manual(values = performance_colors, drop = FALSE) +
+    coord_sf(xlim = st_bbox(provmap)[c("xmin", "xmax")],
+             ylim = st_bbox(provmap)[c("ymin", "ymax")],
+             expand = FALSE) +
+    theme_minimal()+
+    labs(
+      title = paste("Tree Plot Locations for", sp),
+      subtitle = "Species Distribution with Climate Data and Assessed Performance",
+      color = "Performance"
+    )
+
+  ggsave(filename = paste0("./graphics/map_", sp, ".png"), plot = p, width = 8, height = 6)
+}
+
+# 
+# tree_data <- tree.sf %>% filter(species == "Fd")
+# ggplot() +
+#     geom_sf(data = provmap, fill = "grey90", color = "black") +
+#     geom_sf(data = tree_data, color = "grey50", size = 1, alpha = 0.8, shape = 1) +
+#     #geom_sf(data = gom_data, color = "grey20", size = 2, alpha = 0.8, shape = 15) +
+#     #geom_sf(data = assessed_data_jittered, aes(color = performance), size = 3, shape = 17, alpha = 0.9) +
+#     #scale_color_manual(values = performance_colors, drop = FALSE) +
+#     coord_sf(xlim = st_bbox(provmap)[c("xmin", "xmax")],
+#              ylim = st_bbox(provmap)[c("ymin", "ymax")],
+#              expand = FALSE) +
+#     theme_minimal()+
+#     labs(
+#       title = paste("Tree Plot Locations for", sp),
+#       subtitle = "Species Distribution with Climate Data and Assessed Performance",
+#       color = "Performance"
+#     )
+```
+
+
+```{r}
+library(ggplot2)
+
+# Create a data frame of shape codes
+shape_df <- data.frame(
+  shape = 0:25,
+  x = rep(1:6, length.out = 26),
+  y = rep(5:1, each = 6, length.out = 26)
+)
+
+# Plot the shape codes
+ggplot(shape_df, aes(x = x, y = y)) +
+  geom_point(aes(shape = factor(shape)), size = 5, fill = "steelblue") +
+  geom_text(aes(label = shape), vjust = -1.5, size = 4) +
+  scale_shape_manual(values = shape_df$shape) +
+  theme_void() +
+  ggtitle("ggplot2 Shape Codes (0–25)")
+
+library(colorspace)
+
+# Choose a qualitative palette
+qualitative_hcl(5, palette = "Set 2")
+
+# Visualize multiple palettes
+hcl_palettes(plot = TRUE)
+
+# Interactive palette picker
+#choose_palette()  # Opens a GUI if you're in RStudio
+
+```
+

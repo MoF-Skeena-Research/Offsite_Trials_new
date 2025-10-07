@@ -1,5 +1,5 @@
 ---
-title: "GoM_trial_cleanup"
+title: "GoM_trial_import_and_cleanup"
 author: "WH MacKenzie"
 date: "2023-11-14"
 output: html_document
@@ -33,7 +33,7 @@ con <- dbConnect(RPostgres::Postgres(),dbname = 'reforest_app',
                  password = 'BECisGOD2023')
 ```
 
-## Download data off server
+## Download GoM trial data off server
 
 ```{r import data}
 psites <- data.table(dbGetQuery(con,"select * from planting_info"))

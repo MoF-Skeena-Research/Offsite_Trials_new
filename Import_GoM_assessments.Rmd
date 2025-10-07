@@ -8,61 +8,84 @@ output: html_document
 ```{r setup, include=FALSE}
 library(readxl)
 library(tidyverse)
+library(purrr)
 require(gt)
+require(data.table)
 # Define the target values for A1 position
 target_values <- c("NW", "N", "NE", "E", "SE", "S", "SW", "W")
 ```
-Import trees from the GoM assessment form
+Import trees from the GoM assessment form spreadsheets
 need to adjust to include block id as column in tree data
 And then turn function such that it reads through all spreadsheets in a folder
 ```{r}
-library(readxl)
-library(dplyr)
-library(purrr)
-
 process_excel_folder_recursive <- function(folder_path, target_values = c("NW", "N", "NE", "E", "SE", "S", "SW", "W")) {
   # Get all Excel files in the folder and subfolders
   file_list <- list.files(folder_path, pattern = "\\.xlsx$", full.names = TRUE, recursive = TRUE)
 
   # Initialize an empty list to store processed data
   all_data <- list()
-
+#file_path = "./raw_data/Smithers Assessments/mcdonnell_k2p_aa_10.xlsx"
   # Loop through each file
   for (file_path in file_list) {
     # Read the Block_ID from the "Block info" sheet (cell B2)
     sheets <- excel_sheets(file_path)
-    
     if ("Block info" %in% sheets) {
-      Block_ID <- read_excel(file_path, sheet = "Block info", range = "B1", col_names = FALSE)[[1]]
-    } else {
-      Block_ID <- NA  # If "Block info" sheet is missing, assign NA
-    }
+  Block_ID <- read_excel(file_path, sheet = "Block info", range = "B1", col_names = FALSE)[[1]]
+  
+  # Skip file if Block_ID is missing or blank
+  if (is.na(Block_ID) || Block_ID == "") {
+    Block_ID <- "needs_block_id"
+    next
+  }
+  
+  Block_lat <- read_excel(file_path, sheet = "Block info", range = "B3", col_names = FALSE)[[1]]
+  Block_long <- read_excel(file_path, sheet = "Block info", range = "B4", col_names = FALSE)[[1]]
+  Planted_year <- read_excel(file_path, sheet = "Block info", range = "B5", col_names = FALSE)[[1]]
+} else {
+  cat("Skipping file due to missing 'Block info' sheet:", file_path, "\n")
+  next
+}
+# 
+#     if ("Block info" %in% sheets) {
+#       Block_ID <- read_excel(file_path, sheet = "Block info", range = "B1", col_names = FALSE)[[1]]
+#       Block_lat <- read_excel(file_path, sheet = "Block info", range = "B3", col_names = FALSE)[[1]]
+#       Block_long <- read_excel(file_path, sheet = "Block info", range = "B4", col_names = FALSE)[[1]]
+#       Planted_year <- read_excel(file_path, sheet = "Block info", range = "B5", col_names = FALSE)[[1]]
+#       
+#     } else {
+#       Block_ID <- NA  # If "Block info" sheet is missing, assign NA
+# 
+#     }
   # Print Block_ID for each file
     cat("Processing file:", file_path, "\nBlock_ID:", Block_ID, "\n")
-
+#sheet_name = "Fd"
     # Function to check if the first cell (A1) contains a target value
-    filter_sheets <- function(sheet_name) {
-      first_cell <- read_excel(file_path, sheet = sheet_name, range = "A1", col_names = FALSE)
-      return(!is.na(first_cell[[1]]) && first_cell[[1]] %in% target_values)
-    }
-
+filter_sheets <- function(sheet_name) {
+  first_cell <- read_excel(file_path, sheet = sheet_name, range = "A1", col_names = FALSE)
+  first_value <- toupper(first_cell[[1]])  # Convert to uppercase
+  return(!is.na(first_value) && first_value %in% target_values)
+}
     # Filter sheets based on A1 contents and remove unwanted sheets
     valid_sheets <- Filter(filter_sheets, sheets)
-    valid_sheets <- valid_sheets[!valid_sheets %in% c("BlankSppAssessment")]
+    valid_sheets <- valid_sheets[!valid_sheets %in% c("BlankSppAssessment", "AssessmentCodesDefs", "TrialAssessmentCodesDefs", "TreeAssessmentCodesDefs", "Export Summary")]
     # remove any sheets that begin with "Spp"
     valid_sheets <- valid_sheets[!grepl("^Spp", valid_sheets)]
-
+    valid_sheets <- valid_sheets[!grepl("^Sheet", valid_sheets)]
     # Import valid sheets and read the desired range
     data_list <- lapply(valid_sheets, function(sheet) {
       df <- read_excel(file_path, sheet = sheet, range = "B2:F6", col_names = FALSE)
       df_long <- df %>%
         pivot_longer(cols = everything(), names_to = "column", values_to = "value") %>%
         filter(!is.na(value)) %>%
-        mutate(Block_ID = Block_ID,  # Add Block_ID from "Block info" sheet
+        mutate(Block_ID = as.character(Block_ID),# Add Block_ID from "Block info" sheet
+               Block_lat = as.numeric(Block_lat),
+               Block_long = as.numeric(Block_long),
+               Planted_year = as.numeric(Planted_year),
                species = sheet,  # Add sheet name
                vigour = substr(value, 1, 1),
                notes = substr(value, 2, nchar(value))) %>%
-        select(Block_ID, species, vigour, notes)
+        dplyr::select(Block_ID, Planted_year, Block_lat, Block_long, species, vigour, notes)
+              #select(Block_ID, species, vigour, notes)
       return(df_long)
     })
 
@@ -80,45 +103,99 @@ process_excel_folder_recursive <- function(folder_path, target_values = c("NW", 
 }
 
 # Usage example
-folder_path <- "./raw_data/"
+folder_path <- "./assessments_clean/"
+#folder_path <- "./raw_data/2025/EricPollack_Kalum/"
 Trees <- process_excel_folder_recursive(folder_path)
+
+Trees2 <- Trees %>%
+  mutate(
+    species_code = sub("[^A-Za-z].*", "", species),
+    replicate_raw = sub("^[A-Za-z]+", "", species),
+    replicate_clean = gsub("[()-]", "", replicate_raw),
+    replicate = as.numeric(replicate_clean),
+    replicate = ifelse(is.na(replicate), 1, replicate), 
+    species = species_code
+  ) %>%
+  dplyr::select(-replicate_raw, -replicate_clean, -species_code) %>% 
+  mutate(species = recode(species, 'Fdi' = "Fd"))
+
+
+
+blocks <- Trees2 %>% distinct(Block_ID) %>% nrow()
+trials <- Trees2 %>% distinct(Block_ID, species) %>% nrow()
+
+fwrite(Trees2, "./clean_data/GoM_assessed_trees_2023_24.csv")
 ```
+
+Summary across trial
 ```{r}
 # Count of unique Block_IDs
-no_blocks_assessed <- Trees %>%
+no_blocks_assessed <- Trees2 %>%
   distinct(Block_ID) %>%
   nrow()
 # Count of unique Block_IDs + species
-assessed <- Trees %>% mutate(vigour_value = ifelse(vigour == "P", 1, 
+assessed <- Trees2 %>% mutate(vigour_value = ifelse(vigour == "P", 1, 
                                                    ifelse(vigour == "F", 2, 
                                                           ifelse(vigour == "G", 3,
                                                                  ifelse(vigour == "E", 4, 0))))) %>%
   mutate(survival = ifelse(vigour_value == 0, 0, 1)) %>%
-  group_by(Block_ID, species) %>%
-  summarize(count = n(), mean_vig = mean(vigour_value), survival = (sum(survival)/count), .groups = "drop") %>% 
+  group_by(Block_ID, Planted_year, Block_lat, Block_long, species, replicate) %>%
+  summarize(count = n(), mean_vig = mean(vigour_value), survival = (sum(survival)/count), .groups = "drop") %>% group_by(Block_ID, Planted_year, Block_lat, Block_long, species) %>% slice_max(mean_vig, n=1) %>% ungroup %>%
   mutate(performance = ifelse(mean_vig >= 3.5, "Excellent", 
                               ifelse(mean_vig >= 2.5, "Good", 
                                      ifelse(mean_vig >= 1.5, "Fair", 
                                             ifelse(mean_vig >= 0.5, "Poor", 
-                                                   ifelse(mean_vig < 0.5, "Fail", "Fail"))))))
+                                                   ifelse(mean_vig < 0.5, "Fail", "Fail")))))) %>% 
+  mutate(species = recode(species, 'Fdi' = "Fd"))
 
-# gt summary table of assessed
-assessed %>%
-  gt() #%>%
-  # tab_header(
-  #   title = "Summary of assessed trees"
-  # ) %>%
-  # cols_label(
-  #   Block_ID = "Block ID",
-  #   n_species = "Number of species",
-  #   mean_vig = "Mean vigour"
-  # ) %>%
-  # fmt_number(
-  #   columns = vars(mean_vig),
-  #   decimals = 2
-  # )
+fwrite(assessed, "./clean_data/GoM_assessed_trials_2023_24.csv")
+```
+add in Hardy casual surveys
+```{r}
+hardy.surveys <- fread("./assessments_clean/2025/Hardy_All_Simple_Survey.csv") %>%
+  mutate(
+    longitude = ifelse(longitude < 0, longitude, -longitude),
+    latitude = latitude,
+    PlotNumber = PlotNumber,
+    species = species,
+    year_established = year(ymd(date_established)),
+    replicate = 1,
+    mean_vig = NA
+  ) %>%
+  filter(!is.na(latitude), !is.na(longitude)) %>% 
+  dplyr::select(Block_ID = PlotNumber, Planted_year = year_established, Block_lat =latitude, Block_long = longitude,  species = species, replicate, count, mean_vig, survival, performance) %>% filter(!performance %in% c("Missing"))
+assessed2 <- rbind(assessed, hardy.surveys) %>% distinct
+fwrite(assessed2, "./clean_data/GoM_assessed_trials_2023_24.csv")
+```
 
+```{r}
+# ordinal logistic regression
+library(MASS)
+assessed$performance <- factor(assessed$performance, levels = c("Fail", "Poor", "Fair", "Good", "Excellent"), ordered = TRUE)
+model <- polr(performance ~ Planted_year, data = assessed, Hess = TRUE)
+summary(model)
 
+assessed$score <- case_when(
+  assessed$performance == "Fail" ~ 1,
+  assessed$performance == "Poor" ~ 2,
+  assessed$performance == "Fair" ~ 3,
+  assessed$performance == "Good" ~ 4,
+  assessed$performance == "Excellent" ~ 5
+)
 
+# For parametric comparison
+anova_result <- aov(score ~ Planted_year, data = assessed)
+summary(anova_result)
+
+# For non-parametric comparison
+kruskal.test(score ~ Planted_year, data = assessed)
+
+lm_model <- lm(mean_vig ~ Planted_year, data = assessed)
+summary(lm_model)
+par(mfrow = c(2, 2))
+plot(lm_model)
+## is there differential performance between planting year?
+lm_model2 <- lm(mean_vig ~ Planted_year + species, data = assessed)
+summary(lm_model2)
 ```
 

@@ -53,7 +53,7 @@ The map is zoomable
 #| fig-cap: map of GoM trials established in 2023
 
 
-psites.working <- fread(file = "F:/OneDrive - Government of BC/OffSite-Trials/Michelle/GOM/planting_info_updates.csv") %>% filter(!remove %in% "x")
+psites.working <- fread(file = "D:/OneDrive - Government of BC/OffSite-Trials/Michelle/GOM/2024/planting_info_202410281436.csv")# %>% filter(!remove %in% "x")
 
 require(sf)
 
