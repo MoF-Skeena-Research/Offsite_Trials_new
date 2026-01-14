@@ -21,17 +21,17 @@ require(data.table)
 require(DBI)
 require(climr)
 require(tictoc)
+require(ggdensity)
+library(gt)
+library(cowplot)
 ```
 
 ```{r}
 tree.codes <- fread("./clean_data/Tree_Species_Codes.csv")
 ```
-
-```{r}
 ##Summary of GoM trials
-library(dplyr)
-library(tidyr)
-library(gt)
+```{r}
+
 gom.trials <- fread("./clean_data/gom_trials_compiled.csv")
 # Step 1: Create the main summary table
 gom.trials.summary <- gom.trials %>%
@@ -43,12 +43,14 @@ gom.trials.summary <- gom.trials %>%
     values_fill = 0
   ) %>%
   ungroup()
+# Summarize total trees planted per species per year
 
 # Step 2: Reorder year columns numerically
 year_cols <- sort(setdiff(names(gom.trials.summary), "species"))
 
+
 gom.trials.summary <- gom.trials.summary %>%
-  select(species, all_of(year_cols)) %>%
+  dplyr::select(species, all_of(year_cols)) %>%
   mutate(Total_Trials = rowSums(across(all_of(year_cols)))) %>%
   relocate(Total_Trials, .after = last_col()) %>%
   arrange(species)
@@ -60,7 +62,7 @@ column_totals <- gom.trials.summary %>%
     species = "Total",
     Total_Trials = sum(across(all_of(year_cols)))
   ) %>%
-  select(names(gom.trials.summary))  # ensure column order matches
+  dplyr::select(names(gom.trials.summary))  # ensure column order matches
 
 # Step 4: Bind the summary row to the bottom
 gom.trials.summary <- bind_rows(gom.trials.summary, column_totals)
@@ -68,125 +70,150 @@ gom.trials.summary <- bind_rows(gom.trials.summary, column_totals)
 # Step 5: Render with gt
 gt::gt(gom.trials.summary) %>%
   tab_header(
-    title = "GoM Trial Summary by Species and Year Established",
-    subtitle = "Number of Trials per Species per Year"
+  title = md(""),
+  subtitle = md("")
   ) %>%
   fmt_number(decimals = 0) %>%
   cols_label(
     species = "Species",
     Total_Trials = "Total Trials"
   ) %>%
-  opt_align_table_header("left") %>% gtsave(filename = "./graphics/GoM_trial_summary_by_species_year2.png")
-
-fwrite(gom.trials.summary, "./clean_data/GoM_trial_summary_by_species_year.csv")
-```
-
-Assessed trial performance by year
-```{r}
-assessed <- fread( "./clean_data/GoM_assessed_trials_2023_24.csv")
-# Prepare data with counts and percentages
-performance_summary <- assessed %>% filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>% drop_na %>% 
-  count(species, performance, Planted_year) %>%
-  group_by(species, Planted_year) %>%
-  mutate(percent = n / sum(n) * 100) %>%
-  ungroup() %>%
-  mutate(performance = factor(performance,
-                              levels = c("Excellent", "Good", "Fair", "Poor", "Fail"),
-                              ordered = TRUE))
-
-# Stacked bar plot with counts and percentage labels
-ggplot(performance_summary, aes(x = species, y = n, fill = performance)) +
-  geom_bar(stat = "identity", position = "stack") +
-  geom_text(aes(label = paste0(round(percent), "%")),
-            position = position_stack(vjust = 0.5),
-            size = 3, color = "black") +
-  theme_minimal() +
-  labs(title = "Performance Distribution by Species in GoM Assessed Trials planted 2023-24",
-       x = "Species",
-       y = "Count of Trials",
-       fill = "Performance") +
-  scale_fill_manual(values = c("Excellent" = "darkgreen",
-                               "Good" = "lightgreen",
-                               "Fair" = "yellow",
-                               "Poor" = "orange",
-                               "Fail" = "red")) +
-  theme(legend.position = "top")+
-  facet_wrap(~Planted_year)
-
-ggsave("./graphics/GoM_assessed_trials_performance_2024_25.png", width = 10, height = 6)
-```
-
-Density graphic of species across climate space
-```{r}
-# Load and filter data
-tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>%
-  filter(CoastInterior == "Interior", species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>%
-  distinct()#, "Bg""At", "Hw", 
-
-gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
-  filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw"))#,  "Bg""At", "Hw",
-
-WNA.climate <- fread("D:/OneDrive - Government of BC/CommonTables/BGC_climate/WNA_BGCv13_10km.csv") %>%
-  filter(!is.na(MAT), !is.na(MAP), !is.na(MSP), !is.na(MWMT), !is.na(CMD_an), !is.na(DD5_an))
-
-gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
-  filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>% #, "Bg""At", "Hw", 
-  mutate(performance = factor(performance, levels = c("Fail", "Poor", "Fair", "Good", "Excellent")))
-
-# Define performance levels and colors
-performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
-performance_colors <- c(
-  "Fail" = "red",
-  "Poor" = "orange",
-  "Fair" = "yellow",
-  "Good" = "green",
-  "Excellent" = "purple")
-
-ggplot(tree.climate2, aes(x = MSP, y = MCMT)) +
-  # Background climate points (grey, no legend)
-  geom_point(data = gom.climate, aes(x = MSP, y = MCMT), color = "grey20", alpha = 0.3, size = 1) +
-
-  # Assessed trials with performance-based coloring
-  geom_point(
-    data = gom.assessed,
-    aes(x = MSP, y = MCMT, color = performance),
-    size = 1.5, shape = 17, alpha = 0.9
-  ) +
-
-  # Density shading
-  geom_hdr(data = tree.climate2, aes(x = MSP, y = MCMT)) +
-  geom_hdr_rug(data = tree.climate2, aes(x = MSP, y = MCMT), sides = "tr", outside = TRUE) +
-
-  # Manual color scale for performance
-  scale_color_manual(
-    values = performance_colors,
-    drop = FALSE,
-    guide = guide_legend(override.aes = list(shape = 17, size = 3))
-  ) +
-
-  # Optional: grayscale fill for density contours
-  #scale_fill_gradient(low = "grey90", high = "grey10") +
-
-  coord_cartesian(clip = "off") +
-  facet_wrap(~ species, ncol = 3) +
-  theme_minimal() +
-  labs(
-    title = "Species-Specific Density Across Climate Space",
-    subtitle = "Western North America",
-    x = "MSP", y = "MCMT"
+  #opt_align_table_header("left") %>%
+  tab_options(
+    table.font.size = px(10),
+    #heading.title.font.size = px(10),
+    #heading.subtitle.font.size = px(10),
+    column_labels.font.size = px(10),
+    data_row.padding = px(2)
+  ) %>%
+  gtsave(
+    filename = "./graphics/GoM_trial_summary_by_species_year2.png",
+    vwidth = 635,   # 16.8 cm
+    vheight = 600
   )
 
-ggsave("./graphics/Species_Climate_Density_w_GoM.png", width = 8, height = 10)
-
+#fwrite(gom.trials.summary, "./clean_data/GoM_trial_summary_by_species_year.csv")
 ```
 
 
+
+## Geographic distances from GoM trials to nearest natural stand and plot
 ```{r}
 library(sf)
-library(ggplot2)
 library(dplyr)
 library(data.table)
+library(geosphere)  # For geodesic distance calculation
 
+# Load and prepare spatial data (already done in your script)
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv")
+tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  left_join(tree.codes, by = c("Species" = "Code"))
+gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py"))
+gom.sf <- st_as_sf(gom.climate, coords = c("longitude", "latitude"), crs = 4326) %>%
+  filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py"))
+
+gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv")
+gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("longitude", "latitude"), crs = 4326)
+
+# Function to calculate nearest distance (in km) from each trial to natural stand
+calculate_nearest_distance <- function(trial_sf, natural_sf) {
+  trial_coords <- st_coordinates(trial_sf)
+  natural_coords <- st_coordinates(natural_sf)
+
+  nearest_distances <- sapply(1:nrow(trial_coords), function(i) {
+    trial_point <- trial_coords[i, ]
+    dists <- distHaversine(trial_point, natural_coords) / 1000  # Convert to km
+    min(dists)
+  })
+
+  trial_sf$nearest_natural_km <- nearest_distances
+  return(trial_sf)
+}
+
+# Loop over species and calculate distances
+distance_results <- list()
+assessed_distance <- list()
+for (sp in unique(gom.sf$species)) {
+  tree_data <- tree.sf %>% filter(species == sp)
+  trial_data <- gom.sf %>% filter(species == sp)
+  if (nrow(tree_data) > 0 && nrow(trial_data) > 0) {
+    trial_with_dist <- calculate_nearest_distance(trial_data, tree_data)
+    distance_results[[sp]] <- trial_with_dist
+  }
+}
+
+for (sp in unique(gom.assessed.sf$species)) {
+  tree_data <- tree.sf %>% filter(species == sp)
+  assessed_data <- gom.assessed.sf %>% filter(species == sp)
+  if (nrow(tree_data) > 0 && nrow(trial_data) > 0) {
+    assessed_with_dist <- calculate_nearest_distance(assessed_data, tree_data)
+    assessed_distance[[sp]] <- assessed_with_dist
+  }
+}
+
+
+# Combine all species results into one sf object
+all_gom_trials <- do.call(rbind, distance_results)
+assessed_gom_trials <- do.call(rbind, assessed_distance)  %>%  distinct
+# Merge assessed distances back to main GoM trials data
+# gom_trials <- left_join(st_drop_geometry(all_gom_trials), st_drop_geometry(assessed_gom_trials), by = "PlotNumber") 
+# # Optional: Save to CSV or shapefile
+# # st_write(gom_trials_with_distances, "./output/gom_trials_with_distances.gpkg")
+# fwrite(gom_trials, "./clean_data/all_gom_trials_data.csv")
+
+library(ggplot2)
+library(dplyr)
+
+# Ensure 'species' and 'nearest_natural_km' are present
+summary_data <- all_gom_trials %>%
+  #st_drop_geometry() %>%
+  filter(!is.na(nearest_natural_km)) %>%
+  mutate(species = factor(species))  # Optional: reorder by median distance
+
+# Plot: Boxplot with jittered points
+# ggplot(summary_data, aes(x = species, y = nearest_natural_km, fill = species)) +
+#   geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+#   geom_jitter(width = 0.2, alpha = 0.5, color = "black", size = 1.5) +
+#   scale_y_continuous(name = "Nearest Natural Stand (km)") +
+#   scale_x_discrete(name = "Species") +
+#   theme_minimal(base_size = 14) +
+#   theme(legend.position = "none") #+
+#   #labs(
+#     #title = "Distance from GoM Trials to Nearest Natural Plot",
+#     #subtitle = "By Species",
+#     #caption = "Distances calculated using geodesic (Haversine) method"
+#   #)
+
+distance_plot <- ggplot(summary_data, aes(x = species, y = nearest_natural_km, fill = species)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, alpha = 0.5, color = "black", size = 1) +
+  scale_y_continuous(name = "Km") +
+  scale_x_discrete(NULL)+#name = "Species") +
+  theme_minimal(base_size = 10) +
+  # theme(
+  #   legend.position = "none",
+  #   panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+  #   plot.background = element_rect(color = "black", fill = NA, linewidth = 0.6)
+  # ) +
+    theme(
+    axis.title.x = element_text(size = 8),
+    axis.title.y = element_text(size = 8),
+    axis.text = element_text(size = 8),
+    axis.ticks = element_line(color = "grey70", linewidth = 0.2),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+    plot.background = element_rect(color = "black", fill = NA, linewidth = 0.6),
+    plot.title = element_text(size = 10, face = "bold")
+  )+
+  labs(title = "Distance to Nearest Natural Stand")
+ distance_plot #
+ggsave("./graphics/GoM_trial_distances_to_natural_plots.png", plot = distance_plot, width = 8.6, height = 6, units = "cm")
+
+
+```
+
+## Choose dimensions of prov map to use
+```{r}
 tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv")
 tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326) %>%
   left_join(tree.codes, by = c("Species" = "Code"))
@@ -195,12 +222,431 @@ gom.sf <- st_as_sf(gom.climate, coords = c("longitude", "latitude"), crs = 4326)
   filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py"))
 
 provmap <- st_read("D:/OneDrive - Government of BC/CommonTables/BC_AB_US_Shp/BC_Province_Outline_Dissolved.gpkg")
+bbox <- st_bbox(provmap)
+fix_bbox <- function(b) {
+  b <- as.numeric(b)
+  names(b) <- c("xmin", "ymin", "xmax", "ymax")
+  class(b) <- c("bbox")
+  attr(b, "crs") <- NA
+  b
+}
 
+shrink_bbox_asymmetric <- function(bbox,
+                                   shrink_left   = 0,
+                                   shrink_right  = 0,
+                                   shrink_bottom = 0,
+                                   shrink_top    = 0) {
+  
+  # Ensure bbox is numeric and named
+  b <- as.numeric(bbox)
+  names(b) <- c("xmin", "ymin", "xmax", "ymax")
+  
+  # Extract CRS if present
+  crs <- attr(bbox, "crs")
+  
+  width  <- b["xmax"] - b["xmin"]
+  height <- b["ymax"] - b["ymin"]
+  
+  new <- c(
+    xmin = b["xmin"] + width  * shrink_left,
+    ymin = b["ymin"] + height * shrink_bottom,
+    xmax = b["xmax"] - width  * shrink_right,
+    ymax = b["ymax"] - height * shrink_top
+  )
+  
+  # Rebuild as a proper bbox object
+  class(new) <- "bbox"
+  attr(new, "crs") <- crs
+  
+  new
+}
+
+bbox_new <- shrink_bbox_asymmetric(
+  bbox,
+  shrink_top = .2,      # remove 30% from top
+  shrink_bottom = .05,# remove 10% from bottom
+  shrink_left = .25,
+  shrink_right = 0.05
+)
+provmap_crop <- st_crop(provmap, bbox_new)
+
+ggplot() +
+  geom_sf(data = provmap_crop) +
+coord_sf(
+  xlim = c(bbox_new["xmin"], bbox_new["xmax"]),
+  ylim = c(bbox_new["ymin"], bbox_new["ymax"]),
+  expand = FALSE,
+  crs = st_crs(provmap)
+) +
+  theme_bw()
+
+#provmap_crop = provmap
+```
+
+#Graphic with maps of tree plot locations and GoM trials 
+```{r}
+library(data.table)
+library(dplyr)
+library(sf)
+library(ggplot2)
+library(cowplot)
+
+#------------------------------------------------------------
+# 1. Load assessed GoM trials
+#------------------------------------------------------------
 gom.assessed <- fread("./clean_data/GoM_assessed_trials_2023_24.csv")
-gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("Block_long", "Block_lat"), crs = 4326)
 
-# Define performance levels and colors
+gom.assessed.sf <- st_as_sf(
+  gom.assessed,
+  coords = c("Block_long", "Block_lat"),
+  crs = 4326
+)
+
+#------------------------------------------------------------
+# 2. Define performance categories and species names
+#------------------------------------------------------------
 performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+
+performance_colors <- c(
+  "Excellent" = "purple",
+  "Good"      = "green",
+  "Fair"      = "yellow",
+  "Poor"      = "orange",
+  "Fail"      = "red"
+)
+
+species_names <- c(
+  "Cw" = "Cw - Western redcedar",
+  "Fd" = "Fd - Douglas-fir",
+  "Lw" = "Lw - Western larch",
+  "Pw" = "Pw - Western white pine",
+  "Py" = "Py - Ponderosa pine"
+)
+
+#------------------------------------------------------------
+# 3. Build species‑specific maps
+#------------------------------------------------------------
+plots <- list()
+
+for (sp in unique(gom.sf$species)) {
+
+  gom_data <- gom.sf %>%
+    filter(species == sp) %>%
+    mutate(type = "GoM trial")
+
+  tree_data <- tree.sf %>%
+    filter(species == sp) %>%
+    mutate(type = "Natural stand")
+
+  assessed_data <- gom.assessed.sf %>%
+    filter(species == sp) %>%
+    mutate(performance = factor(performance, levels = performance_levels))
+
+  #--------------------------------------------------------
+  # Jitter assessed points to avoid overplotting
+  #--------------------------------------------------------
+  jittered_coords <- st_coordinates(assessed_data) +
+    matrix(runif(nrow(assessed_data) * 2, -0.03, 0.03), ncol = 2)
+
+  assessed_data_jittered <- st_as_sf(
+    cbind(assessed_data, jittered_coords),
+    coords = c("X", "Y"),
+    crs = 4326
+  )
+
+  #--------------------------------------------------------
+  # Build the species map
+  #--------------------------------------------------------
+  p <- ggplot() +
+    geom_sf(data = provmap_crop, fill = "grey90", color = "black") +
+
+    geom_sf(data = gom_data,
+            aes(shape = type),
+            color = "black", size = 2, alpha = 0.8) +
+
+    geom_sf(data = assessed_data_jittered,
+            aes(color = performance),
+            size = 2, shape = 17, alpha = 0.9) +
+
+    geom_sf(data = tree_data,
+            aes(shape = type),
+            color = "darkblue", size = 0.8, alpha = 0.8) +
+
+    scale_shape_manual(values = c("Natural stand" = 1, "GoM trial" = 2)) +
+    scale_color_manual(values = performance_colors,
+                       breaks = performance_levels) +
+
+    guides(
+      shape = guide_legend(order = 1),
+      color = guide_legend(order = 2)
+    ) +
+
+    coord_sf(
+      xlim = st_bbox(provmap_crop)[c("xmin", "xmax")],
+      ylim = st_bbox(provmap_crop)[c("ymin", "ymax")],
+      expand = FALSE
+    ) +
+
+theme_minimal() +
+theme(
+  panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+  plot.background = element_rect(fill = NA, color = NA),
+  plot.margin = margin(0, 0, 0, 0),
+
+  axis.title.x = element_text(size = 8),
+  axis.title.y = element_text(size = 8),
+  axis.text = element_text(size = 8),
+  axis.ticks = element_line(color = "grey70", linewidth = 0.2)
+) +
+
+    labs(
+      title = species_names[sp],
+      shape = "Source",
+      color = "GoM Assessed"
+    )
+
+  plots[[sp]] <- p
+}
+
+#------------------------------------------------------------
+# 4. Reorder species panels
+#------------------------------------------------------------
+species_order <- c("Cw", "Fd", "Lw", "Pw", "Py")
+plots_ordered <- plots[species_order]
+
+#------------------------------------------------------------
+# 5. Extract shared legend
+#------------------------------------------------------------
+legend <- cowplot::get_legend(
+  plots_ordered[[1]] +
+    scale_shape_manual(values = c("Natural stand" = 1, "GoM trial" = 2)) +
+    scale_color_manual(values = performance_colors,
+                       breaks = performance_levels) +
+    theme(
+      legend.position = "bottom",
+      legend.box = "horizontal",
+      legend.justification = "left",
+      legend.box.just = "left",
+      legend.text = element_text(hjust = 0),
+      legend.title = element_text(hjust = 0)
+    )
+)
+
+#------------------------------------------------------------
+# 6. Add distance plot and remove legends from all panels
+#------------------------------------------------------------
+distance_plot2 <- distance_plot + 
+  #coord_fixed(ratio = .5)+   # adjust ratio if needed
+theme_minimal() +
+theme(
+  panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+  plot.background = element_rect(fill = NA, color = NA),
+  plot.margin = margin(0, 0, 0, 0),
+
+  axis.title.x = element_text(size = 8),
+  axis.title.y = element_text(size = 8),
+  axis.text = element_text(size = 8),
+  axis.ticks = element_line(color = "grey70", linewidth = 0.2)
+)
+
+
+
+plots_ordered_with_dist <- c(plots_ordered, list(distance_plot2))
+
+plots_nolegend <- lapply(
+  plots_ordered_with_dist,
+  function(x) x + theme(legend.position = "none")
+)
+
+#------------------------------------------------------------
+# 7. Combine into 2 rows (Lw, Pw, Py) / (Cw, Fd)
+#------------------------------------------------------------
+combined_map_plot <- plot_grid(
+  plotlist = plots_nolegend,
+  nrow = 2,
+  labels = "AUTO",
+  label_size = 10,
+  label_fontface = "bold",
+  label_x = 0.03,
+  label_y = 0.95,
+  #rel_heights = c(1, 1),
+  hjust = 0,
+  vjust = 0.5,
+  align = "hv",
+  axis = "tblr"
+)
+combined_map_plot
+# Save intermediate version
+ggsave("./graphics/all_species_maps_new.jpg",
+       combined_map_plot,
+       width = 24.4, height = 16, units = "cm", dpi = 600)
+
+#------------------------------------------------------------
+# 8. Add shared legend below
+#------------------------------------------------------------
+final_plot <- plot_grid(
+  combined_map_plot,
+  legend,
+  ncol = 1,
+  rel_heights = c(1, 0.12))#,
+#   align = "hv",
+#   axis = "lr"
+# )
+
+final_plot
+
+ggsave("./graphics/all_species_maps_final.jpg",
+       final_plot,
+       width = 24.4, height = 16, units = "cm", dpi = 600)
+```
+
+Assessed GoM trial performance
+```{r}
+#assessed <- fread( "./clean_data/GoM_assessed_trials_2023_24.csv")
+gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py"),
+         PERIOD == "1961_1990") %>%
+  arrange(species) %>%
+  mutate(performance = factor(performance,
+                              levels = c("Fail", "Poor", "Fair", "Good", "Excellent"))) %>%
+  distinct() %>%
+  drop_na(performance)
+# Prepare data with counts and percentages
+performance_summary <- gom.assessed %>% filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>% drop_na %>% 
+  count(species, performance) %>% #, Planted_year) %>%
+  group_by(species) %>% #, Planted_year) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  ungroup() %>%
+  mutate(performance = factor(performance,
+                              levels = c("Excellent", "Good", "Fair", "Poor", "Fail"),
+                              ordered = TRUE))
+
+total_counts <- performance_summary %>%
+  #group_by(Planted_year) %>%
+  summarise(total_n = sum(n), .groups = 'drop')
+# Stacked bar plot with counts and percentage labels
+ggplot(performance_summary, aes(x = species, y = n, fill = performance)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(percent), "%")),
+            position = position_stack(vjust = 0.5),
+            size = 3, color = "black") +
+  theme_minimal() +
+  labs(#title = "Performance Distribution by Species in GoM Assessed Trials planted 2023-24",
+       #subtitle = "242 trials assessed across 5 species",
+       x = "Species",
+       y = "Count of Trials",
+       fill = "Performance") +
+  scale_fill_manual(values = c("Excellent" = "purple",
+                               "Good" = "green",
+                               "Fair" = "yellow",
+                               "Poor" = "orange",
+                               "Fail" = "red")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(size = 10, face = "bold"),
+        strip.text = element_text(size = 10, face = "bold"))#+
+ # facet_wrap(~Planted_year)
+
+ggsave("./graphics/GoM_assessed_trials_performance_2023_24.png", width = 7.3725, height = 4)
+```
+create hdr plots by species
+```{r}
+make_hdr_panel <- function(sp, clim_x, clim_y) {
+
+  ggplot() +
+    # HDR contours
+    geom_hdr(
+      data = tree.climate2 %>% filter(species == sp),
+      aes(x = .data[[clim_x]], y = .data[[clim_y]]),
+      probs = c(0.90, 0.75, 0.5)
+    ) +
+
+    # All GoM trials
+    geom_point(
+      data = gom.climate %>% filter(species == sp),
+      aes(x = .data[[clim_x]], y = .data[[clim_y]]),
+      color = "grey20", alpha = 0.3, size = 1
+    ) +
+
+    # Assessed trials
+    geom_point(
+      data = gom.assessed %>% filter(species == sp),
+      aes(x = .data[[clim_x]], y = .data[[clim_y]], color = performance),
+      size = 2, shape = 17, alpha = 0.9
+    ) +
+
+    scale_color_manual(values = performance_colors, drop = FALSE) +
+
+    # Axis limits (still hard‑coded; can parameterize if you want)
+    coord_cartesian(xlim = c(250, 2000), clip = "off") +
+    scale_x_continuous(limits = c(250, 2000)) +
+
+    theme_minimal(base_size = 10) +
+    theme(
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+      plot.background = element_rect(fill = NA, color = NA),
+      plot.margin = margin(2, 2, 2, 2),
+      legend.position = "none",
+      axis.title.x = element_text(size = 8),
+      axis.title.y = element_text(size = 8)
+    ) +
+
+    labs(
+      title = species_names[sp],
+      x = clim_x,
+      y = clim_y
+    )
+}
+
+species_order <- c("Cw","Fd","Lw","Pw","Py")
+clim_x = "DD5_an"
+clim_y = "MCMT"
+hdr_panels <- lapply(
+  species_order,
+  function(sp) make_hdr_panel(sp, clim_x, clim_y)
+)
+
+names(hdr_panels) <- species_order
+```
+
+```{r}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggdensity)
+library(patchwork)
+
+# -----------------------------
+# 1. Select climate variables
+# -----------------------------
+clim_x <- "DD5_an"
+clim_y <- "MCMT"
+
+# -----------------------------
+# 2. Load and filter data
+# -----------------------------
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py")) %>%
+  distinct()
+
+gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py"))
+
+WNA.climate <- fread("D:/OneDrive - Government of BC/CommonTables/BGC_climate/WNA_BGCv13_10km.csv") %>%
+  filter(!is.na(MAT), !is.na(MAP), !is.na(MSP), !is.na(MWMT),
+         !is.na(CMD_an), !is.na(DD5_an))
+
+gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py"),
+         PERIOD == "1961_1990") %>%
+  arrange(species) %>%
+  mutate(performance = factor(performance,
+                              levels = c("Fail", "Poor", "Fair", "Good", "Excellent"))) %>%
+  distinct() %>%
+  drop_na(performance)
+
+# -----------------------------
+# 3. Species names & colors
+# -----------------------------
 performance_colors <- c(
   "Fail" = "red",
   "Poor" = "orange",
@@ -208,41 +654,935 @@ performance_colors <- c(
   "Good" = "green",
   "Excellent" = "purple"
 )
- sp = "Cw"
-for (sp in unique(gom.sf$species)) {
-  gom_data <- gom.sf %>% filter(species == sp)
-  tree_data <- tree.sf %>% filter(species == sp)
-  assessed_data <- gom.assessed.sf %>%
-    filter(species == sp) %>%
-    mutate(performance = factor(performance, levels = performance_levels))
 
-  # Apply jitter to assessed_data coordinates
-  jittered_coords <- st_coordinates(assessed_data) +
-    matrix(runif(nrow(assessed_data) * 2, -0.03, 0.03), ncol = 2)
-  assessed_data_jittered <- st_as_sf(
-    cbind(assessed_data, jittered_coords),
-    coords = c("X", "Y"),
-    crs = 4326
+species_names <- c(
+  "Cw" = "Western redcedar",
+  "Fd" = "Douglas-fir",
+  "Lw" = "Western larch",
+  "Pw" = "Western white pine",
+  "Py" = "Ponderosa pine"
+)
+
+tree.climate2[, species_full := species_names[species]]
+gom.assessed[, species_full := species_names[species]]
+gom.climate[, species_full := species_names[species]]
+
+# -----------------------------
+# 4. HDR Climate Density Plot
+# -----------------------------
+hdr.plot <- ggplot(tree.climate2,
+                   aes(x = .data[[clim_x]], y = .data[[clim_y]])) +
+
+  geom_hdr(
+    data = tree.climate2,
+    aes(x = .data[[clim_x]], y = .data[[clim_y]]),
+    probs = c(0.90, 0.75, 0.5)
+  ) +
+
+  geom_point(
+    data = gom.climate,
+    aes(x = .data[[clim_x]], y = .data[[clim_y]]),
+    color = "grey20", alpha = 0.3, size = 1
+  ) +
+
+  geom_point(
+    data = gom.assessed,
+    aes(x = .data[[clim_x]], y = .data[[clim_y]], color = performance),
+    size = 2, shape = 17, alpha = 0.9
+  ) +
+
+  scale_color_manual(
+    values = performance_colors,
+    drop = FALSE,
+    guide = guide_legend(override.aes = list(shape = 17, size = 2))
+  ) +
+
+  coord_cartesian(xlim = c(250, 2000), clip = "off") +
+  scale_x_continuous(limits = c(250, 2000)) +
+
+  facet_wrap(~ species_full, ncol = 3) +
+
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    strip.text = element_blank(),
+    strip.background = element_blank(),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    axis.title.x = element_text(size = 8),
+    axis.title.y = element_text(size = 8)
+  ) +
+
+  labs(
+    x = clim_x,
+    y = clim_y
   )
 
-  p <- ggplot() +
-    geom_sf(data = provmap, fill = "grey90", color = "black") +
-    geom_sf(data = tree_data, color = "grey50", size = 1, alpha = 0.8, shape = 1) +
-    geom_sf(data = gom_data, color = "grey20", size = 1, alpha = 0.8, shape = 15) +
-    geom_sf(data = assessed_data_jittered, aes(color = performance), size = 3, shape = 17, alpha = 0.9) +
-    scale_color_manual(values = performance_colors, drop = FALSE) +
-    coord_sf(xlim = st_bbox(provmap)[c("xmin", "xmax")],
-             ylim = st_bbox(provmap)[c("ymin", "ymax")],
-             expand = FALSE) +
-    theme_minimal()+
-    labs(
-      title = paste("Tree Plot Locations for", sp),
-      subtitle = "Species Distribution with Climate Data and Assessed Performance",
-      color = "Performance"
-    )
+hdr.plot
 
-  ggsave(filename = paste0("./graphics/map_", sp, ".png"), plot = p, width = 8, height = 6)
+ggsave("./graphics/Species_Climate_Density_w_GoM_tall.png",
+       plot = hdr.plot, width = 8.6, height = 24.4, units = "cm")
+
+# -----------------------------
+# 5. Species label column
+# -----------------------------
+species_labels <- paste(names(species_names), "-", species_names)
+
+label_df <- data.frame(
+  species_full = species_labels,
+  y = seq_along(species_labels)
+)
+
+label_plot <- ggplot(label_df, aes(x = 1, y = y, label = species_full)) +
+  geom_text(hjust = .2, fontface = "bold", size = 3) +
+  scale_y_reverse() +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(plot.margin = margin(0, 0, 0, 0))
+
+# # -----------------------------
+# # 6. Combine with map + HDR
+# # -----------------------------
+# combined <- (label_plot | hdr.plot| combined_map_plot ) +
+#   plot_layout(
+#     widths = c(0.15, 0.425, 0.25),
+#     guides = "collect"
+#   ) &
+#   theme(legend.position = "bottom")
+# 
+# combined
+
+ggsave("./graphics/Species_HDR.png",
+       plot = combined, width = 16.8, height = 24.4, units = "cm")
+```
+
+Identify climate novelty of GoM trials compared to natural stands
+
+```{r}
+clean_numeric <- function(x) {
+  x <- as.character(x)
+  x <- trimws(x)
+  x[x %in% c("", ".", "NA", "NaN", "NULL", "null", "--")] <- NA
+  suppressWarnings(as.numeric(x))
 }
+
+prep_climate <- function(df, x = "MSP", y = "MCMT") {
+  df <- as.data.table(df)
+  df[, (x) := clean_numeric(get(x))]
+  df[, (y) := clean_numeric(get(y))]
+  df
+}
+library(MASS)
+library(FNN)
+
+compute_hdr_membership <- function(tree_sp, gom_sp, 
+                                   x = "MSP", y = "MCMT",
+                                   prob = 0.95, n = 200) {
+  
+  # Extract numeric vectors
+  refx <- clean_numeric(tree_sp[[x]])
+  refy <- clean_numeric(tree_sp[[y]])
+  
+  kde <- MASS::kde2d(
+    x = refx,
+    y = refy,
+    n = n,
+    lims = c(range(refx, na.rm = TRUE), range(refy, na.rm = TRUE))
+  )
+  
+  grid <- expand.grid(
+    x = kde$x,
+    y = kde$y
+  )
+  grid$density <- as.numeric(kde$z)
+  
+  dens_sorted <- sort(grid$density, decreasing = TRUE)
+  cum_prob <- cumsum(dens_sorted) / sum(dens_sorted)
+  d_thresh <- dens_sorted[which(cum_prob >= prob)[1]]
+  
+  gom_mat  <- as.matrix(gom_sp[, .(clean_numeric(get(x)), clean_numeric(get(y)))])
+  grid_mat <- as.matrix(grid[, c("x", "y")])
+  
+  nn <- get.knnx(
+    data  = grid_mat,
+    query = gom_mat,
+    k = 1
+  )$nn.index
+  
+  gom_density <- grid$density[nn]
+  
+  list(
+    hdr_flag = gom_density >= d_thresh,
+    hdr_density = gom_density,
+    d_thresh = d_thresh
+  )
+}
+library(robustbase)
+
+compute_robust_mahal <- function(tree_sp, gom_sp, 
+                                 x = "MSP", y = "MCMT") {
+  
+  tree_mat <- as.matrix(tree_sp[, .(clean_numeric(get(x)), clean_numeric(get(y)))])
+  gom_mat  <- as.matrix(gom_sp[,  .(clean_numeric(get(x)), clean_numeric(get(y)))])
+  
+  mcd <- covMcd(tree_mat)
+  center <- mcd$center
+  S_inv  <- solve(mcd$cov)
+  
+  diffs <- sweep(gom_mat, 2, center, "-")
+  d2 <- rowSums((diffs %*% S_inv) * diffs)
+  sqrt(d2)
+}
+compute_local_mahal <- function(tree_sp, gom_sp,
+                                x = "MSP", y = "MCMT",
+                                k_neigh = 20) {
+  
+  tree_mat <- as.matrix(tree_sp[, .(clean_numeric(get(x)), clean_numeric(get(y)))])
+  gom_mat  <- as.matrix(gom_sp[,  .(clean_numeric(get(x)), clean_numeric(get(y)))])
+  
+  nn_tree <- get.knnx(
+    data  = tree_mat,
+    query = gom_mat,
+    k = 1
+  )$nn.index[, 1]
+  
+  local_mahal <- numeric(nrow(gom_sp))
+  
+  for (i in seq_len(nrow(gom_sp))) {
+    center_idx <- nn_tree[i]
+    
+    nn_loc <- get.knnx(
+      data  = tree_mat,
+      query = matrix(tree_mat[center_idx, ], nrow = 1),
+      k = min(k_neigh, nrow(tree_mat))
+    )$nn.index[1, ]
+    
+    loc_mat <- tree_mat[nn_loc, , drop = FALSE]
+    S <- cov(loc_mat, use = "complete.obs")
+    S_inv <- solve(S)
+    
+    diff <- gom_mat[i, ] - colMeans(loc_mat)
+    d2 <- as.numeric(t(diff) %*% S_inv %*% diff)
+    local_mahal[i] <- sqrt(d2)
+  }
+  
+  list(
+    local_mahal = local_mahal,
+    nearest_idx = nn_tree
+  )
+}
+compute_species_climate_novelty <- function(tree_df, gom_df,
+                                            x = "MSP", y = "MCMT",
+                                            species_col = "species",
+                                            hdr_prob = 0.95,
+                                            k_neigh = 20) {
+  
+  tree_df <- prep_climate(tree_df, x, y)
+  gom_df  <- prep_climate(gom_df,  x, y)
+  
+  results <- list()
+  
+  for (sp in intersect(unique(tree_df[[species_col]]),
+                       unique(gom_df[[species_col]]))) {
+    
+    tree_sp <- tree_df[get(species_col) == sp]
+    gom_sp  <- gom_df[get(species_col) == sp]
+    
+    if (nrow(tree_sp) < 5 || nrow(gom_sp) == 0) next
+    
+    hdr_res <- compute_hdr_membership(tree_sp, gom_sp, x, y, prob = hdr_prob)
+    rob_mahal <- compute_robust_mahal(tree_sp, gom_sp, x, y)
+    local_res <- compute_local_mahal(tree_sp, gom_sp, x, y, k_neigh)
+    
+    nearest_idx <- local_res$nearest_idx
+    
+    out <- data.table(
+      species          = sp,
+      gom_PlotNumber   = gom_sp$PlotNumber,
+      gom_MSP          = gom_sp[[x]],
+      gom_MCMT         = gom_sp[[y]],
+      nearest_PlotNumber = tree_sp$PlotNumber[nearest_idx],
+      nearest_MSP        = tree_sp[[x]][nearest_idx],
+      nearest_MCMT       = tree_sp[[y]][nearest_idx],
+      delta_MSP          = gom_sp[[x]] - tree_sp[[x]][nearest_idx],
+      delta_MCMT         = gom_sp[[y]] - tree_sp[[y]][nearest_idx],
+      robust_mahalanobis = rob_mahal,
+      local_mahalanobis  = local_res$local_mahal,
+      hdr_inside         = hdr_res$hdr_flag
+    )
+    
+    results[[sp]] <- out
+  }
+  
+  rbindlist(results, use.names = TRUE, fill = TRUE)
+}
+
+```
+
+climate novelty of GoM trials, plot by species with assessed trials highlighted
+```{r}
+novelty_table <- compute_species_climate_novelty(
+  tree_df = tree.climate2,
+  gom_df  = gom.climate,
+  x = "DD5_an",
+  y = "MCMT",
+  species_col = "species",
+  hdr_prob = 0.95,
+  k_neigh = 20
+)
+fwrite(novelty_table, "./clean_data/GoM_trials_climate_novelty.csv")
+dist_stats <- novelty_table %>%
+  group_by(species) %>%
+  summarise(
+    n1 = n(),
+    min = min(local_mahalanobis, na.rm = TRUE),
+    q1 = quantile(local_mahalanobis, 0.25, na.rm = TRUE),
+    median = median(local_mahalanobis, na.rm = TRUE),
+    mean = mean(local_mahalanobis, na.rm = TRUE),
+    q3 = quantile(local_mahalanobis, 0.75, na.rm = TRUE),
+    max = max(local_mahalanobis, na.rm = TRUE)
+  )
+dist_stats_gt <- dist_stats %>%
+  gt(rowname_col = "species") %>%
+  tab_header(
+    title = "Distribution of Local Mahalanobis Distance by Species"
+  ) %>%
+  fmt_number(
+    columns = c(min, q1, median, mean, q3, max),
+    decimals = 2
+  ) %>%
+  cols_label(
+    n1 = "N",
+    min = "Min",
+    q1 = "Q1",
+    median = "Median",
+    mean = "Mean",
+    q3 = "Q3",
+    max = "Max"
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(3)
+  )
+
+dist_stats_gt
+
+dist_stats
+novelty_classes <- novelty_table %>%
+  mutate(
+    novelty_class = case_when(
+      local_mahalanobis < 1 ~ "in_range",
+      local_mahalanobis >= 1 & local_mahalanobis <= 3 ~ "peripheral",
+      local_mahalanobis > 3 ~ "novel"
+    )
+  ) %>%
+  group_by(species, novelty_class) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(species) %>%
+  mutate(prop = n / sum(n))
+
+novelty_classes
+
+combined_summary <- dist_stats %>%
+  left_join(
+    novelty_classes %>%
+      tidyr::pivot_wider(
+        names_from = novelty_class,
+        values_from = prop,
+        values_fill = 0
+      ),
+    by = "species"
+  )
+
+combined_summary
+combined_gt <- combined_summary %>%
+  gt(rowname_col = "species") %>%
+  tab_header(
+    title = "Climate Novelty Summary by Species"
+  ) %>%
+  fmt_number(
+    columns = c(min, q1, median, mean, q3, max),
+    decimals = 2
+  ) %>%
+  fmt_percent(
+    columns = c(in_range, peripheral, novel),
+    decimals = 1
+  ) %>%
+  cols_label(
+    n = "N",
+    min = "Min",
+    q1 = "Q1",
+    median = "Median",
+    mean = "Mean",
+    q3 = "Q3",
+    max = "Max",
+    in_range = "< 1 (In‑range)",
+    peripheral = "1–3 (Peripheral)",
+    novel = "> 3 (Novel)"
+  ) %>%
+  tab_options(
+    table.font.size = px(12),
+    data_row.padding = px(3)
+  )
+
+combined_gt
+
+```
+
+climate novelty of GoM trials
+
+```{r}
+# -----------------------------
+# 1. Define climate variables
+# -----------------------------
+clim_x <- "DD5_an"
+clim_y <- "MCMT"
+
+# -----------------------------
+# 2. Build assessed GoM table
+# -----------------------------
+gom.assessed2 <- assessed_gom_trials %>%
+  filter(PERIOD == "1961_1990",
+         species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>%
+  mutate(PlotNumber = paste0(PlotNumber, "_", species, "_", replicate)) %>%
+  dplyr::select(
+    PlotNumber = id,
+    species,
+    mean_vig,
+    survival,
+    performance,
+    !!clim_x := .data[[clim_x]],
+    !!clim_y := .data[[clim_y]],
+    nearest_natural_km
+  ) %>%
+  mutate(
+    performance = as.character(performance),
+    PlotNumber = as.character(PlotNumber)
+  )
+
+# -----------------------------
+# 3. Compute novelty
+# -----------------------------
+novelty_table.ass <- compute_species_climate_novelty(
+  tree_df = tree.climate2,
+  gom_df  = gom.assessed2,
+  x = clim_x,
+  y = clim_y,
+  species_col = "species",
+  hdr_prob = 0.95,
+  k_neigh = 20
+) %>%
+  data.frame() %>%
+  mutate(PlotNumber = gom_PlotNumber)
+
+novelty_table.ass <- left_join(
+  gom.assessed2,
+  novelty_table.ass,
+  by = c("PlotNumber", "species")
+) %>% distinct()
+
+# -----------------------------
+# 4. Distance plot
+# -----------------------------
+distance_plot <- ggplot(summary_data,
+                        aes(x = species, y = nearest_natural_km, fill = species)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, alpha = 0.5, color = "black", size = .5) +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    x = "Species",
+    y = "Nearest Natural Stand (km)",
+    color = "Performance"
+  )
+
+ggsave("./graphics/GoM_trial_distances_to_natural_plots.png",
+       plot = distance_plot, width = 8.6, height = 8, units = "cm")
+
+# -----------------------------
+# 5. Climate novelty plot
+# -----------------------------
+climate.plot <- ggplot() +
+  geom_boxplot(
+    data = novelty_table,
+    aes(x = species, y = local_mahalanobis, fill = species),
+    outlier.shape = NA,
+    outlier.alpha = 0.2,
+    width = 0.6
+  ) +
+  geom_jitter(
+    data = novelty_table,
+    aes(x = species, y = local_mahalanobis),
+    width = 0.2,
+    alpha = 0.5,
+    size = .5,
+    color = "black"
+  ) +
+  geom_jitter(
+    data = novelty_table.ass,
+    aes(x = species, y = local_mahalanobis, color = performance),
+    width = 0.15,
+    alpha = 0.9,
+    size = 1,
+    shape = 17
+  ) +
+  scale_color_manual(
+    values = performance_colors,
+    drop = FALSE,
+    guide = guide_legend(override.aes = list(shape = 17, size = 2))
+  ) +
+  geom_hline(yintercept = 1, linetype = "dashed",
+             color = "forestgreen", linewidth = 1) +
+  geom_hline(yintercept = 3, linetype = "dashed",
+             color = "firebrick", linewidth = 1) +
+  scale_y_continuous(
+    breaks = seq(0, max(novelty_table$local_mahalanobis, na.rm = TRUE), by = 1)
+  ) +
+  theme_minimal(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  ) +
+  labs(
+    x = "Species",
+    y = "SD Units (Local Mahalanobis)",
+    title = paste0("Local Mahalanobis Novelty (", clim_x, " vs ", clim_y, ")"),
+    color = "Performance"
+  )
+
+ggsave("./graphics/GoM_assessed_trials_local_mahalanobis_by_species.png",
+       plot = climate.plot, width = 8.6, height = 8, units = "cm")
+
+# -----------------------------
+# 6. HDR panel grid
+# -----------------------------
+hdr.plot <- plot_grid(
+  hdr_panels$Cw,
+  hdr_panels$Fd,
+  hdr_panels$Lw,
+  hdr_panels$Pw,
+  hdr_panels$Py,
+  climate.plot,
+  ncol = 3,
+  nrow = 2,
+  labels = c("A", "B", "C", "D", "E", "F"),
+  label_size = 12,
+  label_fontface = "bold",
+  label_x = 0.02,
+  label_y = 0.98,
+  hjust = 0,
+  vjust = 1,
+  align = "hv",
+  axis = "tblr"
+)
+
+ggsave("./graphics/HDR_GoM_mahalanobis_by_species.png",
+       plot = hdr.plot, width = 24.4, height = 16, units = "cm")
+```
+## Performance by novelty class plot
+```{r}
+novelty_table.ass <- novelty_table.ass %>% filter(!is.na(performance)) %>% 
+  mutate(
+    novelty_class = case_when(
+      local_mahalanobis < 1 ~ "In-range",
+      local_mahalanobis < 3 ~ "Peripheral",
+      TRUE ~ "Novel"
+    ),
+    novelty_class = factor(novelty_class,
+                           levels = c("In-range", "Peripheral", "Novel")),
+    performance = factor(performance,
+                         levels = c("Fail", "Poor", "Fair", "Good", "Excellent"))
+  )
+if ("sf" %in% class(novelty_table.ass)) {
+  novelty_table.ass <- sf::st_drop_geometry(novelty_table.ass)
+}
+
+perf_summary_species <- novelty_table.ass %>%
+  group_by(species, novelty_class, performance) %>%
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(
+    total = sum(n),
+    proportion = n / total
+  ) %>%
+  ungroup() %>%
+  dplyr::select(species, novelty_class, performance, n, proportion)
+
+perf_summary_species_gt <- perf_summary_species %>%
+  gt(
+    rowname_col = "performance",
+    groupname_col = "novelty_class"
+  ) %>%
+  tab_spanner(
+    label = "Species",
+    columns = species
+  ) %>%
+  fmt_percent(columns = proportion, decimals = 1) %>%
+  cols_label(
+    species = "Species",
+    n = "Count",
+    proportion = "Proportion"
+  ) %>%
+  tab_header(
+    title = "Performance Ratios by Novelty Class and Species"
+  )
+
+perf_summary_species_gt
+
+
+perf_novelty_plot <- novelty_table.ass %>%
+  ggplot(aes(x = novelty_class, fill = performance)) +
+  geom_bar(position = "fill", color = "black", linewidth = 0.2) +
+  scale_fill_manual(values = performance_colors, drop = FALSE) +
+  facet_wrap(~ species, ncol = 3) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  theme_minimal(base_size = 8) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold"),
+    legend.position = "bottom"
+  ) +
+  labs(
+    x = "Novelty Class",
+    y = "Proportion of Assessed Trials",
+    fill = "Performance"#,
+    #title = paste0("Performance Ratings by Novelty Class (", clim_x, " vs ", clim_y, ")")
+  )
+
+perf_novelty_plot
+
+ggsave("./graphics/GoM_performance_by_novelty_class.png",
+       plot = perf_novelty_plot, width = 8.6, height = 8.6, units = "cm")
+
+
+```
+
+
+```{r}
+gom.assessed2 <- assessed_gom_trials %>% filter(PERIOD == "1961_1990", species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>% mutate(PlotNumber = paste0(PlotNumber, "_", species, "_", replicate)) %>%  dplyr::select(PlotNumber =id, species, mean_vig, survival, performance, DD5_an, MCMT, nearest_natural_km) %>% 
+  mutate(performance = as.character(performance),
+         PlotNumber = as.character(PlotNumber))
+# assessed_distances <- assessed_gom_trials_with_distances %>% 
+#   st_drop_geometry() %>%
+#   dplyr::select(PlotNumber, species, nearest_natural_km) 
+novelty_table.ass <- compute_species_climate_novelty(
+  tree_df = tree.climate2,
+  gom_df  = gom.assessed2,
+  x = "DD5_an",
+  y = "MCMT",
+  species_col = "species",
+  hdr_prob = 0.95, 
+  k_neigh = 20
+)
+gom.assessed2 <- gom.assessed2  %>% data.frame #%>% mutate(PlotNumber = as.factor(PlotNumber))
+novelty_table.ass <- novelty_table.ass  %>% data.frame %>% mutate(PlotNumber = gom_PlotNumber)
+novelty_table.ass <- left_join(gom.assessed2, novelty_table.ass, by = c("PlotNumber", "species")) %>% distinct
+
+distance_plot <- ggplot(summary_data, aes(x = species, y = nearest_natural_km, fill = species)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+  geom_jitter(width = 0.2, alpha = 0.5, color = "black", size = .5) +
+  #scale_y_continuous(name = "Nearest Natural Plot (km)") +
+  #scale_x_discrete(name = "Species") +
+  theme_minimal(base_size = 10) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  ) +
+    labs(
+    x = "Species",
+    y = "Nearest Natural Stand (km)",
+    #title = "Local Mahalanobis Novelty by Species",
+    color = "Performance" )
+#+
+distance_plot #labs(title = "Distance to Nearest Natural Stand")
+ggsave("./graphics/GoM_trial_distances_to_natural_plots.png", plot = distance_plot, width = 8.6, height = 8, units = "cm")
+
+climate.plot <- ggplot() +
+  
+  # Boxplot for all trials
+  geom_boxplot(
+    data = novelty_table,
+    aes(x = species, y = local_mahalanobis, fill = species),
+    outlier.shape = NA,
+    outlier.alpha = 0.2,
+    width = 0.6
+  ) +
+  
+  # Jitter for all trials (grey)
+  geom_jitter(
+    data = novelty_table,
+    aes(x = species, y = local_mahalanobis),
+    width = 0.2,
+    alpha = 0.5,
+    size = .5,
+    color = "black"
+  ) +
+  
+  # Jitter for assessed trials (colored by performance)
+  geom_jitter(
+    data = novelty_table.ass,
+    aes(x = species, y = local_mahalanobis, color = performance),
+    width = 0.15,
+    alpha = 0.9,
+    size = 1,
+    shape = 17
+  ) +
+  scale_color_manual(
+    values = performance_colors,
+    drop = FALSE,
+    guide = guide_legend(override.aes = list(shape = 17, size = 2))
+  ) +
+  
+  # Horizontal cutoffs
+  geom_hline(yintercept = 1, linetype = "dashed", color = "forestgreen", linewidth = 1) +
+  geom_hline(yintercept = 3, linetype = "dashed", color = "firebrick", linewidth = 1) +
+  
+  # Labels for cutoffs (bold)
+# annotate("label", x = 1.32, y = 0,
+#          label = "in range",
+#          vjust = 0, hjust = 0, size = 3,
+#          color = "forestgreen", fontface = "bold",
+#          fill = "white", alpha = 0.8, label.size = 0) +
+# annotate("label", x = 1.32, y = 2,
+#          label = "peripheral",
+#          vjust = 0.5, hjust = 0, size = 3,
+#          color = "goldenrod", fontface = "bold",
+#          fill = "white", alpha = 0.8, label.size = 0) +
+# annotate("label", x = 1.32, y = 3.5,
+#          label = "novel",
+#          vjust = 0, hjust = 0, size = 3,
+#          color = "firebrick", fontface = "bold",
+#          fill = "white", alpha = 0.8, label.size = 0) +
+  
+  # Y-axis ticks every 1
+  scale_y_continuous(
+    breaks = seq(0, max(novelty_table$local_mahalanobis, na.rm = TRUE), by = 1)
+  ) +
+  
+  # Theme cleanup
+  theme_minimal(base_size = 8) +
+  theme(
+    legend.position = "none",
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    plot.title = element_text(face = "bold")
+  ) +
+  
+  labs(
+    x = "Species",
+    y = "SD Units (Local Mahalanobis)",
+    title = "Local Mahalanobis Novelty by Species",
+    color = "Performance"
+  )
+climate.plot
+ggsave("./graphics/GoM_assessed_trials_local_mahalanobis_by_species.png", plot = climate.plot, width = 8.6, height = 8, units = "cm")
+
+
+hdr.plot <- plot_grid(
+  hdr_panels$Cw,   # A
+  hdr_panels$Fd,   # B
+  hdr_panels$Lw,   # C
+  hdr_panels$Pw,   # D
+  hdr_panels$Py,   # E
+  climate.plot,   # F
+  ncol = 3,
+  nrow = 2,
+  labels = c("A", "B", "C", "D", "E", "F"),
+  label_size = 12,
+  label_fontface = "bold",
+  label_x = 0.02,   # inside border
+  label_y = 0.98,   # inside border
+  hjust = 0,
+  vjust = 1,
+  align = "hv",
+  axis = "tblr"
+)
+
+hdr.plot
+ggsave("./graphics/HDR_GoM_mahalanobis_by_species.png", plot = hdr.plot, width = 24.4, height = 16, units = "cm")
+```
+
+
+```{r}
+gom.assessed2 <- gom.assessed2  %>% data.frame #%>% mutate(PlotNumber = as.factor(PlotNumber))
+novelty_table.ass <- novelty_table.ass  %>% data.frame %>% mutate(PlotNumber = gom_PlotNumber)
+xx <- left_join(gom.assessed2, novelty_table.ass, by = c("PlotNumber", "species")) %>% distinct
+
+library(dplyr)
+
+performance_by_hdr <- xx %>%
+  group_by(species, hdr_inside) %>%
+  summarise(
+    n = n(),
+    mean_performance = mean(performance, na.rm = TRUE),
+   mean_dist   = mean(nearest_natural_km, na.rm = TRUE),
+    mean_survival    = mean(survival, na.rm = TRUE),
+    mean_vig         = mean(mean_vig, na.rm = TRUE),
+    .groups = "drop"
+  )
+library(ggplot2)
+#assessed <- fread( "./clean_data/GoM_assessed_trials_2023_24.csv")
+# Prepare data with counts and percentages
+performance_summary <- xx %>%
+  filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>%
+  drop_na() %>%
+  count(species, hdr_inside, performance) %>%   # gives n
+  group_by(species, hdr_inside) %>%             # percent within HDR class
+  mutate(percent = n / sum(n) * 100) %>%
+  ungroup() %>%
+  mutate(performance = factor(
+    performance,
+    levels = c("Excellent", "Good", "Fair", "Poor", "Fail"),
+    ordered = TRUE
+  ))
+
+
+ggplot(performance_summary, aes(x = species, y = n, fill = performance)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(
+    aes(label = paste0(round(percent), "%")),
+    position = position_stack(vjust = 0.5),
+    size = 3,
+    color = "black"
+  ) +
+  theme_minimal() +
+  labs(
+    x = "Species",
+    y = "Count of Trials",
+    fill = "Performance"
+  ) +
+  scale_fill_manual(values = c(
+    "Excellent" = "purple",
+    "Good"      = "green",
+    "Fair"      = "yellow",
+    "Poor"      = "orange",
+    "Fail"      = "red"
+  )) +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 10, face = "bold"),
+    strip.text  = element_text(size = 10, face = "bold")
+  ) +
+  facet_wrap(~ hdr_inside)
+
+
+ggsave("./graphics/GoM_assessed_trials_performance_2023_24.png", width = 7.3725, height = 4)
+```
+library(ggplot2)
+
+ggplot(xx, aes(x = delta_MCMT, y = local_mahalanobis)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  facet_wrap(~ species, scales = "free") +
+  labs(
+    x = "MCMT distance (GoM – nearest treeplot)",
+    y = "Robust Mahalanobis",
+    title = "RM vs delta_MCMT Climate Distance by Species"
+  ) +
+  theme_bw()
+
+ggplot(xx, aes(x = local_mahalanobis, y = mean_vig)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  geom_hline(yintercept = 2.5, linetype = "dashed", color = "darkgreen") +
+  facet_wrap(~ species, scales = "free") +
+  labs(
+    x = "Robust Mahalanobis",
+    y = "Mean Vigor",
+    title = "vigour vs delta_MCMT Climate Distance by Species"
+  ) +
+  theme_bw()
+ggplot(xx, aes(x = local_mahalanobis, y = mean_vig)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, color = "black") +
+  geom_hline(yintercept = 2.5, linetype = "dashed", color = "darkgreen") +
+  facet_wrap(~ species, scales = "free") +
+  labs(
+    x = "Robust Mahalanobis",
+    y = "Mean Vigor",
+    title = "RM vs delta_MCMT Climate Distance by Species"
+  ) +
+  theme_bw()
+
+```
+
+
+####OLD CODE###################
+
+
+```{r }
+# library(sf)
+# library(ggplot2)
+# library(dplyr)
+# library(data.table)
+# 
+# tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv")
+# tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326) %>%
+#   left_join(tree.codes, by = c("Species" = "Code"))
+# 
+# gom.sf <- st_as_sf(gom.climate, coords = c("longitude", "latitude"), crs = 4326) %>%
+#   filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py"))
+# 
+# provmap <- st_read("D:/OneDrive - Government of BC/CommonTables/BC_AB_US_Shp/BC_Province_Outline_Dissolved.gpkg")
+# 
+# gom.assessed <- fread("./clean_data/GoM_assessed_trials_2023_24.csv")
+# gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("Block_long", "Block_lat"), crs = 4326)
+# 
+# # Define performance levels and colors
+# performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+# performance_colors <- c(
+#   "Fail" = "red",
+#   "Poor" = "orange",
+#   "Fair" = "yellow",
+#   "Good" = "green",
+#   "Excellent" = "purple"
+# )
+#  #sp = "Cw"
+# for (sp in unique(gom.sf$species)) {
+#   gom_data <- gom.sf %>% filter(species == sp)
+#   tree_data <- tree.sf %>% filter(species == sp)
+#   assessed_data <- gom.assessed.sf %>%
+#     filter(species == sp) %>%
+#     mutate(performance = factor(performance, levels = performance_levels))
+# 
+#   # Apply jitter to assessed_data coordinates
+#   jittered_coords <- st_coordinates(assessed_data) +
+#     matrix(runif(nrow(assessed_data) * 2, -0.03, 0.03), ncol = 2)
+#   assessed_data_jittered <- st_as_sf(
+#     cbind(assessed_data, jittered_coords),
+#     coords = c("X", "Y"),
+#     crs = 4326
+#   )
+# 
+#   p <- ggplot() +
+#     geom_sf(data = provmap, fill = "grey90", color = "black") +
+#     geom_sf(data = tree_data, color = "grey50", size = 1, alpha = 0.8, shape = 1) +
+#     geom_sf(data = gom_data, color = "grey20", size = 1, alpha = 0.8, shape = 15) +
+#     geom_sf(data = assessed_data_jittered, aes(color = performance), size = 3, shape = 17, alpha = 0.9) +
+#     scale_color_manual(values = performance_colors, drop = FALSE) +
+#     coord_sf(xlim = st_bbox(provmap)[c("xmin", "xmax")],
+#              ylim = st_bbox(provmap)[c("ymin", "ymax")],
+#              expand = FALSE) +
+#     theme_minimal()+
+#     labs(
+#       title = paste("Tree Plot Locations for", sp),
+#       subtitle = "Species Distribution with Climate Data and Assessed Performance",
+#       color = "Performance"
+#     )
+#   print(p)
+#   ggsave(filename = paste0("./graphics/map_", sp, ".png"), plot = p, width = 8, height = 6)
+# }
 
 # 
 # tree_data <- tree.sf %>% filter(species == "Fd")
@@ -263,35 +1603,698 @@ for (sp in unique(gom.sf$species)) {
 #     )
 ```
 
+```{r}
+# library(sf)
+# library(dplyr)
+# library(data.table)
+# library(geosphere)  # For geodesic distance calculation
+# 
+# # Load and prepare spatial data (already done in your script)
+# tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv")
+# tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326) %>%
+#   left_join(tree.codes, by = c("Species" = "Code"))
+# 
+# gom.sf <- st_as_sf(gom.climate, coords = c("longitude", "latitude"), crs = 4326) %>%
+#   filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py"))
+# 
+# gom.assessed <- fread("./clean_data/GoM_assessed_trials_2023_24.csv")
+# gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("Block_long", "Block_lat"), crs = 4326)
+# 
+# # Function to calculate nearest distance (in km) from each trial to natural stand
+# calculate_nearest_distance <- function(trial_sf, natural_sf) {
+#   trial_coords <- st_coordinates(trial_sf)
+#   natural_coords <- st_coordinates(natural_sf)
+# 
+#   nearest_distances <- sapply(1:nrow(trial_coords), function(i) {
+#     trial_point <- trial_coords[i, ]
+#     dists <- distHaversine(trial_point, natural_coords) / 1000  # Convert to km
+#     min(dists)
+#   })
+# 
+#   trial_sf$nearest_natural_km <- nearest_distances
+#   return(trial_sf)
+# }
+# 
+# # Loop over species and calculate distances
+# distance_results <- list()
+# 
+# for (sp in unique(gom.sf$species)) {
+#   tree_data <- tree.sf %>% filter(species == sp)
+#   trial_data <- gom.sf %>% filter(species == sp)
+# 
+#   if (nrow(tree_data) > 0 && nrow(trial_data) > 0) {
+#     trial_with_dist <- calculate_nearest_distance(trial_data, tree_data)
+#     distance_results[[sp]] <- trial_with_dist
+#   }
+# }
+# 
+# # Combine all species results into one sf object
+# gom_trials_with_distances <- do.call(rbind, distance_results)
+# 
+# # Optional: Save to CSV or shapefile
+# # st_write(gom_trials_with_distances, "./output/gom_trials_with_distances.gpkg")
+# # fwrite(st_drop_geometry(gom_trials_with_distances), "./output/gom_trial_distances.csv")
+# 
+# library(ggplot2)
+# library(dplyr)
+# 
+# # Ensure 'species' and 'nearest_natural_km' are present
+# summary_data <- gom_trials_with_distances %>%
+#   st_drop_geometry() %>%
+#   filter(!is.na(nearest_natural_km)) %>%
+#   mutate(species = factor(species))  # Optional: reorder by median distance
+# 
+# # Plot: Boxplot with jittered points
+# ggplot(summary_data, aes(x = species, y = nearest_natural_km, fill = species)) +
+#   geom_boxplot(outlier.shape = NA, alpha = 0.6) +
+#   geom_jitter(width = 0.2, alpha = 0.5, color = "black", size = 1.5) +
+#   scale_y_continuous(name = "Distance to Nearest Natural Plot (km)") +
+#   scale_x_discrete(name = "Species") +
+#   theme_minimal(base_size = 14) +
+#   theme(legend.position = "none") +
+#   labs(
+#     title = "Distance from GoM Trials to Nearest Natural Plot",
+#     subtitle = "By Species",
+#     caption = "Distances calculated using geodesic (Haversine) method"
+#   )
+# 
+# ggsave("./graphics/GoM_trial_distances_to_natural_plots.png", width = 8.6, height = 6, units = "cm")
+```
+
 
 ```{r}
-library(ggplot2)
+# library(dplyr)
+# library(gt)
+# 
+# # Drop geometry and filter valid distances
+# summary_data <- gom_trials_with_distances %>%
+#   st_drop_geometry() %>%
+#   filter(!is.na(nearest_natural_km)) %>%
+#   group_by(species) %>%
+#   summarise(
+#     Min_Distance_km = round(min(nearest_natural_km), 1),
+#     Median_Distance_km = round(median(nearest_natural_km), 1),
+#     Max_Distance_km = round(max(nearest_natural_km), 1),
+#     .groups = "drop"
+#   )
+# 
+# # Optional: Replace species codes with common names
+# species_lookup <- c(
+#   "Cw" = "Western redcedar",
+#   "Fd" = "Douglas-fir",
+#   "Lw" = "Western larch",
+#   "Pw" = "Western white pine",
+#   "Py" = "Ponderosa pine"
+# )
+# 
+# summary_data <- summary_data %>%
+#   mutate(Species = species_lookup[species]) %>%
+#   select(Species, Min_Distance_km, Median_Distance_km, Max_Distance_km)
+# 
+# # Create gt table
+# gt_table <- summary_data %>%
+#   gt() %>%
+#   tab_header(
+#     title = "Distance from GoM Trials to Nearest Natural Plot",
+#     subtitle = "Minimum, Median, and Maximum by Species"
+#   ) %>%
+#   fmt_number(columns = everything(), decimals = 1) %>%
+#   cols_label(
+#     Min_Distance_km = "Min (km)",
+#     Median_Distance_km = "Median (km)",
+#     Max_Distance_km = "Max (km)"
+#   ) %>%
+#   tab_options(
+#     table.font.size = "small",
+#     data_row.padding = px(4)
+#   )
+# 
+# # Print table
+# gt_table
+# # Save as PNG (requires webshot2 or ragg)
+# gtsave(gt_table, filename = "./graphics/gom_distance_summary.png")
 
-# Create a data frame of shape codes
-shape_df <- data.frame(
-  shape = 0:25,
-  x = rep(1:6, length.out = 26),
-  y = rep(5:1, each = 6, length.out = 26)
-)
+```
 
-# Plot the shape codes
-ggplot(shape_df, aes(x = x, y = y)) +
-  geom_point(aes(shape = factor(shape)), size = 5, fill = "steelblue") +
-  geom_text(aes(label = shape), vjust = -1.5, size = 4) +
-  scale_shape_manual(values = shape_df$shape) +
-  theme_void() +
-  ggtitle("ggplot2 Shape Codes (0–25)")
+table to check for errors
+```{r}
+# library(sf)
+# library(dplyr)
+# library(data.table)
+# library(geosphere)
+#
+# # Replace with actual column names
+# gom_plot_col <- "PlotNumber"     # GoM trial plot identifier
+# tree_plot_col <- "PlotNumber"    # Natural tree plot identifier
+#
+# # Function to find nearest tree plot for each GoM trial
+# find_nearest_plot <- function(trial_sf, tree_sf, trial_id_col, tree_id_col) {
+#   trial_coords <- st_coordinates(trial_sf)
+#   tree_coords <- st_coordinates(tree_sf)
+#
+#   nearest_info <- lapply(1:nrow(trial_coords), function(i) {
+#     trial_point <- trial_coords[i, ]
+#     dists <- distHaversine(trial_point, tree_coords)
+#     nearest_index <- which.min(dists)
+#     tibble(
+#       GoM_PlotNumber = trial_sf[[trial_id_col]][i],
+#       Species = trial_sf$species[i],
+#       Nearest_Tree_PlotNumber = tree_sf[[tree_id_col]][nearest_index],
+#       Distance_km = round(dists[nearest_index] / 1000, 2)
+#     )
+#   })
+#
+#   bind_rows(nearest_info)
+# }
+#
+# # Loop over species
+# nearest_table <- list()
+#
+# for (sp in unique(gom.sf$species)) {
+#   trial_data <- gom.sf %>% filter(species == sp)
+#   tree_data <- tree.sf %>% filter(species == sp)
+#
+#   if (nrow(trial_data) > 0 && nrow(tree_data) > 0) {
+#     nearest_table[[sp]] <- find_nearest_plot(trial_data, tree_data, gom_plot_col, tree_plot_col)
+#   }
+# }
+#
+# # Combine all species into one table
+# gom_nearest_plot_table <- bind_rows(nearest_table)
+#
+# # View or export
+# print(gom_nearest_plot_table)
+# fwrite(gom_nearest_plot_table, "./output/gom_nearest_plot_table.csv")
+```
 
-library(colorspace)
-
-# Choose a qualitative palette
-qualitative_hcl(5, palette = "Set 2")
-
-# Visualize multiple palettes
-hcl_palettes(plot = TRUE)
+```{r}
+# library(ggplot2)
+# 
+# # Create a data frame of shape codes
+# shape_df <- data.frame(
+#   shape = 0:25,
+#   x = rep(1:6, length.out = 26),
+#   y = rep(5:1, each = 6, length.out = 26)
+# )
+# 
+# # Plot the shape codes
+# ggplot(shape_df, aes(x = x, y = y)) +
+#   geom_point(aes(shape = factor(shape)), size = 5, fill = "steelblue") +
+#   geom_text(aes(label = shape), vjust = -1.5, size = 4) +
+#   scale_shape_manual(values = shape_df$shape) +
+#   theme_void() +
+#   ggtitle("ggplot2 Shape Codes (0–25)")
+# 
+# library(colorspace)
+# 
+# # Choose a qualitative palette
+# qualitative_hcl(5, palette = "Set 2")
+# 
+# # Visualize multiple palettes
+# hcl_palettes(plot = TRUE)
 
 # Interactive palette picker
 #choose_palette()  # Opens a GUI if you're in RStudio
 
 ```
 
+
+```{r}
+# Load and filter data
+# library(data.table)
+# # bad.locations <- fread("./raw_data/Bad_Plot_Locations.csv") %>% pull(PlotNumber)
+# # tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>% filter(!PlotNumber %in% bad.locations)
+# # fwrite(tree.climate2, "./clean_data/Tree_Plot_Climate.csv")
+# tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>% 
+#   filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>% #CoastInterior == "Interior", 
+#   distinct()#, "Bg""At", "Hw", 
+# 
+# gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
+#   filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw"))#,  "Bg""At", "Hw",
+# 
+# WNA.climate <- fread("D:/OneDrive - Government of BC/CommonTables/BGC_climate/WNA_BGCv13_10km.csv") %>%
+#   filter(!is.na(MAT), !is.na(MAP), !is.na(MSP), !is.na(MWMT), !is.na(CMD_an), !is.na(DD5_an))
+# 
+# gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
+#   filter(species %in% c("Cw","Fd","Lw",  "Pw","Py" )) %>% arrange(species) %>% 
+#   mutate(performance = factor(performance, levels = c("Fail", "Poor", "Fair", "Good", "Excellent"))) %>% distinct %>% drop_na(performance)
+# 
+# # Define performance levels and colors
+# performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+# performance_colors <- c(
+#   "Fail" = "red",
+#   "Poor" = "orange",
+#   "Fair" = "yellow",
+#   "Good" = "green",
+#   "Excellent" = "purple")
+# species_names <- c(
+#   "Cw" = "Western redcedar",
+#   "Fd" = "Douglas-fir",
+#   "Lw" = "Western larch",
+#   "Pw" = "Western white pine",  
+#   "Py" = "Ponderosa pine"
+# )
+# tree.climate2[, species_full := species_names[species]]
+# gom.assessed[, species_full := species_names[species]]
+# gom.climate[, species_full := species_names[species]]
+# 
+# ggplot(tree.climate2, aes(x = MSP, y = MCMT)) +
+#   geom_hdr(data = tree.climate2, aes(x = MSP, y = MCMT), probs = c(0.90, 0.75, 0.5)) +
+#   geom_point(data = gom.climate, aes(x = MSP, y = MCMT), color = "grey20", alpha = 0.3, size = 1) +
+#   geom_point(
+#     data = gom.assessed,
+#     aes(x = MSP, y = MCMT, color = performance),
+#     size = 2, shape = 17, alpha = 0.9
+#   ) +
+#   scale_color_manual(
+#     values = performance_colors,
+#     drop = FALSE,
+#     guide = guide_legend(override.aes = list(shape = 17, size = 3))
+#   ) +
+#   coord_cartesian(clip = "off") +
+#   facet_wrap(~ species_full, ncol = 3) +
+#   theme_minimal(base_size = 12) +
+#   theme(
+#     panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+#     strip.text = element_text(face = "bold", size = 12)
+#   ) +
+#   labs(
+#     #title = "Species-Specific Density Across Climate Space",
+#     #subtitle = "Western North America",
+#     x = "MSP", y = "MCMT"
+#   )
+# 
+# ggsave("./graphics/Species_Climate_Density_w_GoM.png", width = 24.4, height = 16 , units = "cm")
+#  xx <- gom.climate %>% filter(species == "Cw", MSP > 550 & MCMT < -9) %>%  dplyr::select(PERIOD, PlotNumber, species, longitude, latitude, MSP, MCMT)
+```
+
+
+```{r}
+# library(FNN)
+# library(dplyr)
+# 
+# compute_climate_nearest_treeplot <- function(tree_df, gom_df, x = "MSP", y = "MCMT") {
+#   
+# # Force numeric
+# tree_df[[x]] <- as.numeric(tree_df[[x]])
+# tree_df[[y]] <- as.numeric(tree_df[[y]])
+# gom_df[[x]]  <- as.numeric(gom_df[[x]])
+# gom_df[[y]]  <- as.numeric(gom_df[[y]])
+# 
+# # Correct data.table column extraction
+# cols <- c(x, y)
+# tree_mat <- as.matrix(tree_df[, ..cols])
+# gom_mat  <- as.matrix(gom_df[,  ..cols])
+#   # 1 nearest neighbour
+#   nn <- get.knnx(
+#     data  = tree_mat,
+#     query = gom_mat,
+#     k = 1
+#   )
+#   
+#   idx <- nn$nn.index[, 1]
+#   
+#   # Extract nearest treeplot climate
+# nearest <- tree_df[idx, cols, with = FALSE]
+# 
+#   names(nearest) <- c("nearest_MSP", "nearest_MCMT")
+#   
+#   # Compute deltas
+#   gom_df$delta_MSP  <- gom_df[[x]] - nearest$nearest_MSP
+#   gom_df$delta_MCMT <- gom_df[[y]] - nearest$nearest_MCMT
+#   
+#   # Euclidean climate distance
+#   gom_df$climate_distance <- sqrt(gom_df$delta_MSP^2 + gom_df$delta_MCMT^2)
+#   
+#   # Add nearest treeplot ID if available
+#   if ("PlotNumber" %in% names(tree_df)) {
+#     gom_df$nearest_treeplot <- tree_df$PlotNumber[idx]
+#   }
+#   
+#   return(gom_df)
+# }
+# 
+# library(data.table)
+# 
+# compute_species_mahalanobis <- function(tree_df, gom_df,
+#                                                   x = "MSP", y = "MCMT",
+#                                                   species_col = "species") {
+#   
+#   tree_df <- as.data.table(tree_df)
+#   gom_df  <- as.data.table(gom_df)
+#   
+#   # Force numeric
+#   tree_df[, (x) := as.numeric(get(x))]
+#   tree_df[, (y) := as.numeric(get(y))]
+#   gom_df[,  (x) := as.numeric(get(x))]
+#   gom_df[,  (y) := as.numeric(get(y))]
+#   
+#   results <- list()
+#   
+#   for (sp in unique(gom_df[[species_col]])) {
+#     
+#     gom_sp  <- gom_df[get(species_col) == sp]
+#     tree_sp <- tree_df[get(species_col) == sp]
+#     
+#     if (nrow(tree_sp) < 3) next   # need at least 3 points for covariance
+#     
+#     # Covariance matrix
+#     S <- cov(tree_sp[, .(get(x), get(y))], use = "complete.obs")
+#     S_inv <- solve(S)
+#     
+#     # Matrices
+#     tree_mat <- as.matrix(tree_sp[, .(get(x), get(y))])
+#     gom_mat  <- as.matrix(gom_sp[,  .(get(x), get(y))])
+#     
+#     # Compute Mahalanobis distances for treeplots (to define envelope)
+#     tree_diffs <- sweep(tree_mat, 2, colMeans(tree_mat), "-")
+#     tree_d2 <- rowSums((tree_diffs %*% S_inv) * tree_diffs)
+#     tree_mahal <- sqrt(tree_d2)
+#     
+#     # 95% envelope threshold
+#     d95 <- quantile(tree_mahal, 0.95, na.rm = TRUE)
+#     
+#     # Compute Mahalanobis distances for GoM
+#     nearest_idx <- integer(nrow(gom_mat))
+#     mahal_dist  <- numeric(nrow(gom_mat))
+#     
+#     for (i in seq_len(nrow(gom_mat))) {
+#       diffs <- sweep(tree_mat, 2, gom_mat[i, ], "-")
+#       d2 <- rowSums((diffs %*% S_inv) * diffs)
+#       nearest_idx[i] <- which.min(d2)
+#       mahal_dist[i]  <- sqrt(min(d2))
+#     }
+#     
+#     out <- data.table(
+#       species = sp,
+#       gom_PlotNumber = gom_sp$PlotNumber,
+#       gom_MSP  = gom_sp[[x]],
+#       gom_MCMT = gom_sp[[y]],
+#       nearest_PlotNumber = tree_sp$PlotNumber[nearest_idx],
+#       nearest_MSP  = tree_sp[[x]][nearest_idx],
+#       nearest_MCMT = tree_sp[[y]][nearest_idx],
+#       delta_MSP  = gom_sp[[x]] - tree_sp[[x]][nearest_idx],
+#       delta_MCMT = gom_sp[[y]] - tree_sp[[y]][nearest_idx],
+#       mahalanobis_distance = mahal_dist,
+#       outside_95 = mahal_dist > d95
+#     )
+#     
+#     results[[sp]] <- out
+#   }
+#   
+#   rbindlist(results, use.names = TRUE, fill = TRUE)
+# }
+```
+
+```{r}
+# gom.nearest <- compute_climate_nearest_treeplot(
+#   tree_df = tree.climate2,
+#   gom_df  = gom.climate,
+#   x = "MSP",
+#   y = "MCMT"
+# )
+# gom.species.mahal <- compute_species_mahalanobis(
+#   tree_df = tree.climate2,
+#   gom_df  = gom.climate,
+#   x = "MSP",
+#   y = "MCMT",
+#   species_col = "species"
+# )
+
+```
+
+```{r}
+
+# gom.assessed <- fread("./clean_data/GoM_assessed_trials_2023_24.csv")
+# gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("Block_long", "Block_lat"), crs = 4326)
+# 
+# # Define performance levels and colors
+# performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+# performance_colors <- c(
+#   "Excellent" = "purple",
+#     "Good" = "green",
+#     "Fair" = "yellow",
+#    "Poor" = "orange",
+#     "Fail" = "red"
+# )
+# 
+# species_names <- c(
+#   "Cw" = "Cw - Western redcedar",
+#   "Fd" = "Fd - Douglas-fir",
+#   "Lw" = "Lw - Western larch",
+#   "Pw" = "Pw - Western white pine",
+#   "Py" = "Py - Ponderosa pine"
+#   )
+# 
+# plots <- list()
+# 
+# for (sp in unique(gom.sf$species)) {
+#   gom_data <- gom.sf %>% filter(species == sp) %>% mutate(type = "GoM trial")
+#   tree_data <- tree.sf %>% filter(species == sp) %>% mutate(type = "Natural stand")
+#   assessed_data <- gom.assessed.sf %>%
+#     filter(species == sp) %>%
+#     mutate(performance = factor(performance, levels = performance_levels))
+# 
+#   # jitter assessed_data
+#   jittered_coords <- st_coordinates(assessed_data) +
+#     matrix(runif(nrow(assessed_data) * 2, -0.03, 0.03), ncol = 2)
+#   assessed_data_jittered <- st_as_sf(
+#     cbind(assessed_data, jittered_coords),
+#     coords = c("X", "Y"),
+#     crs = 4326
+#   )
+# 
+# p <- ggplot() +
+#   geom_sf(data = provmap_crop, fill = "grey90", color = "black") +
+#   
+#   geom_sf(data = gom_data, aes(shape = type), color = "black", size = 2, alpha = 0.8) +
+#   geom_sf(data = assessed_data_jittered, aes(color = performance), size = 2, shape = 17, alpha = 0.9) +
+#   geom_sf(data = tree_data, aes(shape = type), color = "darkblue", size = .8, alpha = 0.8) +
+#   scale_shape_manual(
+#     values = c("Natural stand" = 1, "GoM trial" = 2)
+#   ) +
+#   scale_color_manual(
+#     values = performance_colors,
+#     breaks = performance_levels
+#   ) +
+#   guides(
+#     shape = guide_legend(order = 1),
+#     color = guide_legend(order = 2)
+#   ) +
+#   coord_sf(
+#     xlim = st_bbox(provmap_crop)[c("xmin", "xmax")],
+#     ylim = st_bbox(provmap_crop)[c("ymin", "ymax")],
+#     expand = FALSE
+#   ) +
+#   theme_minimal() +
+#   theme(
+#     axis.title.x = element_text(size = 8),
+#     axis.title.y = element_text(size = 8),
+#     axis.text = element_text(size = 8),
+#     axis.ticks = element_line(color = "grey70", linewidth = 0.2),
+#     panel.border = element_rect(color = "black", fill = NA, linewidth = 0.6),
+#     plot.background = element_rect(color = "black", fill = NA, linewidth = 0.6),
+#     plot.title = element_text(size = 10, face = "bold")
+#   ) +
+#   labs(
+#     title = species_names[sp],
+#     shape = "Source",
+#     color = "GoM Assessed"
+#   )
+# 
+# 
+#   plots[[sp]] <- p
+# }
+# 
+# 
+# # Reorder plots so that Cw and Fd are last
+# species_order <- c("Cw", "Fd", "Lw", "Pw", "Py")
+# plots_ordered <- plots[species_order]
+# 
+# 
+# 
+# legend <- cowplot::get_legend(
+#   plots_ordered[[1]] +
+#     scale_shape_manual(
+#       values = c("Natural stand" = 1, "GoM trial" = 2),
+#       breaks = c("Natural stand", "GoM trial")
+#     ) +
+#     scale_color_manual(
+#       values = performance_colors,
+#       breaks = performance_levels
+#     ) +
+#     theme(
+#       legend.position = "bottom",
+#       legend.box = "horizontal",
+#       legend.justification = "left",
+#       legend.box.just = "left",
+#       legend.text = element_text(hjust = 0),
+#       legend.title = element_text(hjust = 0)
+#     )
+# )
+# 
+# 
+# 
+# plots_ordered_with_dist <- c(plots_ordered, list(distance_plot))
+# 
+# # Remove legends from all plots
+# plots_nolegend <- lapply(plots_ordered_with_dist, function(x) x + theme(legend.position = "none"))
+# 
+# # Combine into 2 rows: first row has Lw, Pw, Py; second row has Cw, Fd
+# combined_map_plot <- plot_grid(
+#   plotlist = plots_nolegend,
+#   nrow = 2,
+#   labels = "AUTO",
+#   label_size = 12,
+#   label_fontface = "bold",
+#   label_x = 0.03,   # inside border
+#   label_y = 0.95,   # inside border
+#   hjust = 0,
+#   vjust = 0.5,
+#   align = "hv",      # match widths
+#   axis = "lr"       # align left/right edges
+# )
+# 
+# #combined_map_plot <- combined_map_plot +
+# #  theme(legend.position = "none")
+# combined_map_plot
+# 
+# ggsave("./graphics/all_species_maps_new.jpg", combined_map_plot, width = 24.4, height = 16, units = "cm",dpi = 600)
+# 
+# 
+# 
+# # Add the shared legend underneath
+# final_plot <- plot_grid(combined_map_plot, legend, ncol = 1, 
+#                         rel_heights = c(1, 0.12),
+#                   align = "hv",      # match widths
+#                   axis = "lr" )
+# final_plot
+# #Save with specified width
+#  ggsave("./graphics/all_species_maps_final.jpg", final_plot, width = 24.4, height = 16, units = "cm",dpi = 600)
+# 
+```
+
+
+
+Density graphic of species across climate space
+```{r}
+# Load and filter data
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(ggdensity)
+
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>% 
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py")) %>% 
+  distinct()
+
+gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py"))
+
+WNA.climate <- fread("D:/OneDrive - Government of BC/CommonTables/BGC_climate/WNA_BGCv13_10km.csv") %>%
+  filter(!is.na(MAT), !is.na(MAP), !is.na(MSP), !is.na(MWMT), 
+         !is.na(CMD_an), !is.na(DD5_an))
+
+gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
+  filter(species %in% c("Cw","Fd","Lw","Pw","Py")) %>% filter(PERIOD == "1961_1990") %>% 
+  arrange(species) %>%
+  mutate(performance = factor(performance, 
+                              levels = c("Fail", "Poor", "Fair", "Good", "Excellent"))) %>%
+  distinct() %>%
+  drop_na(performance)
+
+# Define performance levels and colors
+performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+performance_colors <- c(
+  "Fail" = "red",
+  "Poor" = "orange",
+  "Fair" = "yellow",
+  "Good" = "green",
+  "Excellent" = "purple"
+)
+
+species_names <- c(
+  "Cw" = "Western redcedar",
+  "Fd" = "Douglas-fir",
+  "Lw" = "Western larch",
+  "Pw" = "Western white pine",
+  "Py" = "Ponderosa pine"
+)
+
+tree.climate2[, species_full := species_names[species]]
+gom.assessed[, species_full := species_names[species]]
+gom.climate[, species_full := species_names[species]]
+
+# Plot
+hdr.plot <- ggplot(tree.climate2, aes(x = DD5_an, y = MCMT)) +
+  geom_hdr(data = tree.climate2, aes(x = DD5_an, y = MCMT), 
+           probs = c(0.90, 0.75, 0.5)) +
+  geom_point(data = gom.climate, aes(x = DD5_an, y = MCMT), 
+             color = "grey20", alpha = 0.3, size = 1) +
+  geom_point(
+    data = gom.assessed,
+    aes(x = DD5_an, y = MCMT, color = performance),
+    size = 2, shape = 17, alpha = 0.9
+  ) +
+  scale_color_manual(
+    values = performance_colors,
+    drop = FALSE,
+    guide = guide_legend(override.aes = list(shape = 17, size = 2))
+  ) +
+  coord_cartesian(xlim = c(250, 2000), clip = "off") +
+  scale_x_continuous(limits = c(250, 2000))+ 
+  facet_wrap(~ species_full, ncol = 3) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    #strip.text = element_text(face = "bold", size = 12),
+     strip.text = element_blank(),
+  strip.background = element_blank(),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    axis.title.x = element_text(size = 8),
+  axis.title.y = element_text(size = 8)
+
+) +
+  labs(x = "DD5_an", y = "MCMT")
+hdr.plot
+ggsave("./graphics/Species_Climate_Density_w_GoM_tall.png", 
+       plot = hdr.plot, width = 8.6, height = 24.4, units = "cm")
+
+library(patchwork)
+
+species_labels <- c(
+  "Cw - Western redcedar",
+  "Fd - Douglas-fir",
+  "Lw - Western larch",
+  "Pw - Western white pine",
+  "Py - Ponderosa pine"
+)
+
+label_df <- data.frame(
+  species_full = species_labels,
+  y = seq_along(species_labels)  # 1 to 5
+)
+label_plot <- ggplot(label_df, aes(x = 1, y = y, label = species_full)) +
+  geom_text(hjust = .2, fontface = "bold", size = 3) + #
+  scale_y_reverse() +
+  coord_cartesian(clip = "off") +
+  theme_void() +
+  theme(
+    plot.margin = margin(0, 0, 0, 0)  # tight to map
+  )
+
+combined <- (label_plot | combined_map_plot | hdr.plot) +
+  plot_layout(
+    widths = c(0.15, 0.425, 0.25),
+    guides = "collect"
+  ) &
+  theme(legend.position = "bottom")
+
+
+
+combined
+ggsave("./graphics/Species_combined_tall.png", 
+       plot = combined, width = 16.8, height = 24.4, units = "cm")
+
+```
