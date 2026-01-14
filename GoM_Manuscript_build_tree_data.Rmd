@@ -187,30 +187,7 @@ fwrite(gom.climate2, "./clean_data/GoM_trial_climate.csv")
 
 ```
 
-add climr to assessed.gom.trials
-``` {r}
-gom.trials <- fread("./clean_data/GoM_assessed_trials_2023_24.csv") %>% rename(longitude = Block_long, latitude = Block_lat, species = species, PlotNumber = Block_ID)
 
-plot.loc = gom.trials
-plot_locations <- st_as_sf(plot.loc, coords = c("longitude", "latitude"), crs = 4269)
-plot_locations <- st_transform(plot_locations, 3005)
-st_crs(plot_locations) <- 3005
-elevation <- terra::rast("D:/OneDrive - Government of BC/CommonTables/DEMs/BC_25m_DEM.tif")
-elevation.pts <- terra::extract(elevation, plot_locations, bind = TRUE) %>% as.data.frame
-gom.trials2 <- left_join(as.data.frame(gom.trials), elevation.pts) %>% dplyr::mutate(id = row_number())%>%
-  dplyr::select(PlotNumber, species, performance, longitude, latitude, elevation = BC_25m_DEM, id)
-my_points <- gom.trials2 %>% dplyr::select(lat = latitude, lon=longitude, elev = elevation, id) %>% na.omit %>% as.data.table
-tic()
-clim_dat <- downscale(
-  xyz = my_points, 
-  return_refperiod = TRUE,
-  #which_refmap = "auto", 
- vars=list_vars())
-toc()
-gom.climate2 <- left_join(gom.trials2, clim_dat) %>% drop_na()
-fwrite(gom.climate2, "./clean_data/GoM_assessed_climate.csv")
-
-```
 
 
 
