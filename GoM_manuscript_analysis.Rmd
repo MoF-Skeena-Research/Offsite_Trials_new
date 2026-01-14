@@ -1,0 +1,767 @@
+---
+title: "GoM_manuscript_graphics"
+author: "WHMackenzie"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, cache = FALSE)
+require(mapview)
+require(rasterVis) 
+require(ggplot2)
+require(sf)
+require(fasterize)
+require(purrr)
+require(parallel)
+require(tmap)
+require(tidyverse)
+require(data.table)
+require(DBI)
+require(climr)
+require(tictoc)
+library(brms)
+library(cowplot)   # or use patchwork
+```
+
+```{r}
+tree.codes <- fread("./clean_data/Tree_Species_Codes.csv")
+# trial summaries
+assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%  filter(!is.na(survival))
+
+```
+
+inspect response variables
+```{r}
+hist(assessed$survival, breaks = 5)
+summary(assessed$survival)
+```
+look at random forests for variable importance by species
+```{r}
+library(dplyr)
+library(purrr)
+library(ranger)
+library(ggplot2)
+library(glue)
+library(ggcorrplot)
+
+
+# Define predictors
+predictors <- c(  'MCMT', 'CMD_sm', 'SHM',   'PAS_an',
+             'DD18_an',  'MAT', 'DDsub0_sp', 'Eref_an', 
+             'Tmin_sm')#'AHM','EXT','bFFP',"MAP",'DD5_an',, 'Tmax_sm''CMI_an',
+
+# Preprocess
+assessed.rf <- assessed %>%
+  filter(PERIOD == "1961_1990") %>%
+  select(survival, species, PERIOD, all_of(predictors)) %>%
+  drop_na() %>%
+  mutate(
+    survival = round(survival * 100, 0),
+    species = as.factor(species)
+  )
+assessed.rf <- assessed.rf %>%
+  mutate(
+    # 📉 CMD_sm: Strong right skew — log-transform
+    CMD_sm = log(CMD_sm + 1),
+
+    # 📊 DD18_an: Low variance, clustered — center and scale
+    DD18_an = scale(DD18_an),
+
+    # 📊 DDsub0_sp: Multimodal and skewed — log-transform
+    DDsub0_sp = log(DDsub0_sp + 1),
+
+    # 🌡️ Eref_an: Long tail — log-transform
+    Eref_an = log(Eref_an + 1),
+
+    # 🌡️ MAT: Slight skew — center and scale
+    MAT = scale(MAT),
+
+    # 🌡️ MCMT: Slight skew — center and scale
+    MCMT = scale(MCMT),
+
+    # 🌧️ PAS_an: Strong right skew — log-transform
+    PAS_an = log(PAS_an + 1),
+
+    # 🌡️ SHM: Slight skew — center and scale
+    SHM = scale(SHM),
+
+    # 🌡️ Tmin_sm: Low variance — center and scale
+    Tmin_sm = scale(Tmin_sm)
+  )
+# Reshape to long format
+assessed.rf.long <- assessed.rf %>%
+  select(all_of(predictors)) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+# Plot histograms
+ggplot(assessed.rf.long, aes(x = Value)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ Variable, scales = "free", ncol = 3) +
+  labs(
+    title = "Histograms of Climate Predictors (1961–1990)",
+    x = "Value",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+# Compute correlation matrix
+cor_df <- assessed %>%
+  filter(PERIOD == "1961_1990") %>%
+  select(all_of(predictors)) %>%
+  drop_na()
+
+cor_matrix <- cor(cor_df, method = "pearson")
+
+# Plot using ggcorrplot
+ggcorrplot(cor_matrix,
+           hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 3,
+           colors = c("blue", "white", "red"),
+           title = "Correlation Matrix of Climate Predictors",
+           ggtheme = theme_minimal())
+
+# Remove highly correlated variables globally
+remove_high_corr <- function(df, cutoff = 0.9) {
+  df <- df %>% select(-survival, -species, -PERIOD)
+  cor_matrix <- cor(df)
+  cor_pairs <- which(abs(cor_matrix) > cutoff & lower.tri(cor_matrix), arr.ind = TRUE)
+  to_remove <- unique(rownames(cor_matrix)[cor_pairs[, 2]])
+  df %>% select(-all_of(to_remove))
+}
+```
+
+
+```{r}
+# Apply correlation filtering
+filtered_predictors <- remove_high_corr(assessed.rf)
+assessed.rf2 <- assessed.rf %>%
+  select(survival, species, PERIOD) %>%
+  bind_cols(filtered_predictors)
+
+# Split by species
+species_list <- split(assessed.rf2, assessed.rf2$species)
+
+# Fit RF models
+rf_models <- imap(species_list, function(df, sp) {
+  if (ncol(df) <= 2) {
+    message(glue("Skipping species '{sp}' — no predictors left after correlation filtering."))
+    return(NULL)
+  }
+  ranger(
+    survival ~ .,
+    data = df %>% select(-species),
+    importance = "permutation"
+  )
+})
+
+# Extract variable importance
+importance_dfs <- imap(rf_models, function(model, sp) {
+  if (is.null(model)) return(NULL)
+  importance_values <- model$variable.importance
+  data.frame(
+    Species = sp,
+    Variable = names(importance_values),
+    Importance = importance_values
+  )
+}) %>% compact()
+
+# Combine and plot
+combined_importance <- bind_rows(importance_dfs)
+
+ggplot(combined_importance, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  facet_wrap(~ Species, scales = "free_y") +
+  coord_flip() +
+  labs(
+    title = "Variable Importance by Species (Correlation Filtered)",
+    x = "Variables",
+    y = "Importance"
+  ) +
+  theme_minimal()
+
+ggsave("./graphics/GoM_RF_Variable_Importance_By_Species_Corr_Filtered.png", width = 10, height = 8)
+```
+
+
+bayesian beta regression of survival proportion
+```{r}
+
+assessed2 <- assessed %>%
+  select(survival, species, PERIOD, Planted_year, CMI_an)%>% filter(PERIOD == "1961_1990") %>%
+  bind_cols(filtered_predictors)  %>% #, Planted_year == "2023"
+  mutate(survival = ifelse(survival == 0, .01, survival),
+                                 PERIOD = as.factor(PERIOD),
+                                 Planted_year = as.factor(Planted_year)) %>% 
+    mutate(
+      CMI_class = case_when(
+        CMI_an < -30 ~ "Extreme Drought",
+        CMI_an < -20 ~ "Severe Drought",
+        CMI_an < -10 ~ "Moderate Drought",
+        CMI_an < 0 ~ "Mild Drought",
+        TRUE ~ "Non-Drought"
+      ))  %>%
+  mutate(CMI_class = ordered(CMI_class, levels = c("Extreme Drought","Severe Drought", "Moderate Drought","Mild Drought", "Non-Drought"))) %>% 
+         #CMI_class = relevel(CMI_class, ref = "Non-Drought")) %>%
+  #filter(!is.na(survival), survival >= 0, survival <= 1) %>%
+  filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>%
+ #dplyr::select(survival, species, CMD_an, DD5_an, MCMT) %>% #, CMI_class) %>% #, SHM_2023, CMI_class) %>% PERIOD, Planted_year, 
+  ungroup %>% drop_na %>% mutate(species = as.factor(species))
+# assessed2 <- assessed2 %>%
+#   mutate(across(all_of(predictors), scale))
+assessed2 <- assessed2 %>%
+  mutate(survival = ifelse(survival == 0, 0.001,
+                    ifelse(survival == 1, 0.999, survival)))
+
+anyNA(assessed2)
+tic()
+
+#climate_normal <- c("CMD_an", "DD5_an", "MCMT", "MSP")
+predictors <- colnames(filtered_predictors)
+# Create interaction terms
+interaction_terms <- paste("species *", predictors)
+
+# Combine into a formula string
+formula_string <- paste("survival ~", paste(interaction_terms, collapse = " + "))
+
+# Convert to formula object
+full_formula <- as.formula(formula_string)
+#brm(survival ~ species + MCMT, data = assessed2, family = zero_one_inflated_beta())
+brm_model <- brm(
+  formula = full_formula,
+  data = assessed2,
+  family = zero_one_inflated_beta(),
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 1), class = "Intercept")
+  ),
+  chains = 4,
+  iter = 2000,
+  warmup = 500,
+  cores = parallel::detectCores()
+)
+toc()
+
+get_prior(bf(survival ~ species + mo(CMI_class)), data = assessed2, family = zero_one_inflated_beta())
+
+is.null(brm_model$fit) 
+summary(brm_model)
+
+ce <- conditional_effects(brm_model)
+plot(ce, ask = FALSE, points = TRUE)
+plot(conditional_effects(brm_model, effects = "CMI_class:species"), points = TRUE)
+marginal_effects(brm_model, effects = "species:CMI_class")
+
+# plot(brm_model, variable = c("b_speciesPw", "b_MCMT"))
+plot(conditional_effects(brm_model, effects = "species:MCMT"))
+ plot(conditional_effects(brm_model, effects = "species:SHM"))
+ plot(conditional_effects(brm_model, effects = "species:PAS_an"))
+ plot(conditional_effects(brm_model, effects = "species:Eref_an"))
+ #plot(conditional_effects(brm_model, effects = "species:CMI_class"))
+rm(brm_model)
+gc()  # garbage collection
+#plot(conditional_effects(brm_model, effects = "species:CMI_class"))
+```
+This is how you would build a model listing different factors outside of the brms function
+```{r}
+climate_normal <- c("CMD_an", "DD5_an", "MCMT", "MSP")
+
+full_formula <- reformulate(
+  termlabels = c("species", "stock_type", "year", "timing", "BEC_variant", 
+                 "site_series", "topo_position", "climate_annual", climate_normal),
+  response = "survival"
+)
+
+brm(
+  formula = full_formula,
+  data = trial_data,
+  family = Beta()
+)
+```
+
+
+```{r}
+## this model takes a long time to run
+tic()
+brm_model_interact <- brm(
+  survival ~ species * MCMT + species * DD5_an + species * CMD_an,
+  data = assessed2,
+  family = Beta(),
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 1), class = "Intercept")
+  ),
+  chains = 4, iter = 2000, warmup = 500, cores = parallel::detectCores()
+)
+
+toc()
+
+
+# Extract conditional effects
+ce_species_MCMT <- conditional_effects(brm_model, effects = "species:MCMT")[[1]]
+ce_species_DD5  <- conditional_effects(brm_model, effects = "species:DD5_an")[[1]]
+ce_species_CMD  <- conditional_effects(brm_model, effects = "species:CMD_an")[[1]]
+
+plot_MCMT <- ggplot(ce_species_MCMT, aes(x = MCMT, y = estimate__, color = species)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = species), alpha = 0.2, color = NA) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Survival vs MCMT", y = "Predicted Survival", x = "Mean Coldest Month Temp (°C)") +
+  theme(legend.position = "bottom")
+
+plot_DD5 <- ggplot(ce_species_DD5, aes(x = DD5_an, y = estimate__, color = species)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = species), alpha = 0.2, color = NA) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Survival vs DD5", y = "Predicted Survival", x = "Growing Degree Days > 5°C") +
+  theme(legend.position = "bottom")
+
+plot_CMD <- ggplot(ce_species_CMD, aes(x = CMD_an, y = estimate__, color = species)) +
+  geom_line(size = 1) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = species), alpha = 0.2, color = NA) +
+  theme_minimal(base_size = 14) +
+  labs(title = "Survival vs CMD", y = "Predicted Survival", x = "Climatic Moisture Deficit (mm)") +
+  theme(legend.position = "bottom")
+
+# Combine plots horizontally or vertically
+combined_plot <- plot_MCMT + plot_DD5  + plot_CMD + plot_layout(ncol = 1)#
+
+# Export to PNG or PDF
+ggsave("./graphics/Survival_Climate_Interactions.png", combined_plot,
+       width = 8, height = 12, dpi = 300)
+
+ggsave("./graphics/Survival_Climate_Interactions.pdf", combined_plot,
+       width = 8, height = 12)
+
+rm(brm_model_interact)
+gc()  # garbage collection
+```
+
+```{r}
+library(dplyr)
+library(purrr)
+
+# Define a function to process each year
+process_period <- function(year) {
+  assessed %>%
+    filter(PERIOD == year, Planted_year == year) %>%
+    mutate(
+      CMI_class = case_when(
+        CMI_an < -30 ~ "Extreme Drought",
+        CMI_an < -20 ~ "Severe Drought",
+        CMI_an < -10 ~ "Moderate Drought",
+        CMI_an < 0 ~ "Mild Drought",
+        TRUE ~ "Non-Drought"
+      ),
+      CMI_class = factor(CMI_class, levels = c("Extreme Drought","Severe Drought", "Moderate Drought","Mild Drought", "Non-Drought")),
+      CMI_class = relevel(CMI_class, ref = "Non-Drought"),
+      PERIOD = year  # keep track of the year
+    )      %>% 
+    mutate(
+      CMD_year = CMD_an,
+      DD5_year = DD5_an,
+      MCMT_year = MCMT,
+      CMI_Year = CMI_an)
+}
+
+# Apply to all unique PERIODs and combine
+assessed_all_years <- map_dfr(unique(assessed$PERIOD), process_period)
+```
+
+```{r}
+assessed_2023 <- assessed %>% filter(PERIOD == "2023", Planted_year == "2023") %>%
+  rename(CMD_an_2023 = CMI_an,
+         DD5_an_2023 = DD5_an,
+         MCMT_2023 = MCMT,
+         SHM_2023 = SHM)
+assessed2 <- assessed_2023 %>% mutate(survival = ifelse(survival == 0, .01, survival)) %>%
+  filter(!is.na(survival), survival > 0, survival < 1) %>%
+  filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>%
+ dplyr::select(survival, species, CMD_an_2023, DD5_an_2023, MCMT_2023) %>% #, SHM_2023) %>% 
+  ungroup %>% drop_na %>% mutate(species = as.factor(species))
+anyNA(assessed2)
+
+brm_model <- brm(
+  formula = survival ~ species + CMD_an_2023 + DD5_an_2023 + MCMT_2023,#+ SHM_2023,
+  data = assessed2,
+  family = Beta(),
+  prior = c(
+    prior(normal(0, 1), class = "b"),
+    prior(normal(0, 1), class = "Intercept")
+  ),
+  chains = 4,
+  iter = 200,
+  warmup = 50,
+  cores = parallel::detectCores(), save_model = TRUE
+)
+is.null(brm_model$fit) 
+summary(brm_model)
+plot(brm_model , variable = c("b_speciesPw", "b_MCMT_2023"))
+plot(conditional_effects(brm_model, effects = "species:MCMT_2023"))
+plot(conditional_effects(brm_model, effects = "species:DD5_an_2023"))
+plot(conditional_effects(brm_model, effects = "species:CMD_an_2023"))
+```
+
+
+```{r}
+library(dplyr)
+library(purrr)
+library(ranger)
+library(ggplot2)
+factors <- c("species", 'CMD_an', 'DD5_an', 'MCMT', 'CMI_an', 'SHM', 'AHM', 'bFFP', 'PAS_an', 'DD18_an', 'MAP', 'MAT', 'DDsub0_sm', 'DDsub0_sp','Eref_an', 'EXT', 'Tmin_sm', 'Tmax_sm', 'Tmin_sp')# 'EMT', 
+# Filter and preprocess
+assessed.rf <- assessed %>%
+  filter(PERIOD == "1961_1990") %>%
+  select(survival, species, factors) %>%
+  drop_na() %>%
+  mutate(
+    survival = round(survival * 100, 0),
+    species = as.factor(species)
+  )
+
+# Split by species
+species_list <- split(assessed.rf, assessed.rf$species)
+
+# Fit RF model for each species
+rf_models <- map(species_list, ~ ranger(
+  survival ~ .,
+  data = select(.x, -species),
+  importance = "permutation"
+))
+
+# Extract variable importance
+importance_dfs <- imap(rf_models, function(model, sp) {
+  importance_values <- model$variable.importance
+  data.frame(
+    Species = sp,
+    Variable = names(importance_values),
+    Importance = importance_values
+  )
+})
+
+# Combine and plot
+combined_importance <- bind_rows(importance_dfs)
+
+ggplot(combined_importance, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  facet_wrap(~ Species, scales = "free_y") +
+  coord_flip() +
+  labs(
+    title = "Variable Importance by Species",
+    x = "Variables",
+    y = "Importance"
+  ) +
+  theme_minimal()
+
+ggsave("./graphics/GoM_RF_Variable_Importance_By_Species.png", width = 10, height = 8)
+       
+```
+
+```{r}
+
+```
+
+
+
+
+```{r}
+# ordinal logistic regression
+library(MASS)
+assessed$performance <- factor(assessed$performance, levels = c("Fail", "Poor", "Fair", "Good", "Excellent"), ordered = TRUE)
+model <- polr(performance ~ Planted_year, data = assessed, Hess = TRUE)
+summary(model)
+
+assessed$score <- case_when(
+  assessed$performance == "Fail" ~ 1,
+  assessed$performance == "Poor" ~ 2,
+  assessed$performance == "Fair" ~ 3,
+  assessed$performance == "Good" ~ 4,
+  assessed$performance == "Excellent" ~ 5
+)
+
+# For parametric comparison
+anova_result <- aov(score ~ Planted_year, data = assessed)
+summary(anova_result)
+
+# For non-parametric comparison
+kruskal.test(score ~ Planted_year, data = assessed)
+
+lm_model <- lm(mean_vig ~ Planted_year, data = assessed)
+summary(lm_model)
+par(mfrow = c(2, 2))
+plot(lm_model)
+## is there differential performance between planting year?
+lm_model2 <- lm(mean_vig ~ Planted_year + species, data = assessed)
+summary(lm_model2)
+```
+
+```{r}
+##Summary of GoM trials
+library(dplyr)
+library(tidyr)
+library(gt)
+gom.trials <- fread("./clean_data/gom_trials_compiled.csv")
+# Step 1: Create the main summary table
+gom.trials.summary <- gom.trials %>%
+  group_by(species, year_established) %>%
+  tally(name = "n") %>%
+  pivot_wider(
+    names_from = year_established,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  ungroup()
+
+# Step 2: Reorder year columns numerically
+year_cols <- sort(setdiff(names(gom.trials.summary), "species"))
+
+gom.trials.summary <- gom.trials.summary %>%
+  select(species, all_of(year_cols)) %>%
+  mutate(Total_Trials = rowSums(across(all_of(year_cols)))) %>%
+  relocate(Total_Trials, .after = last_col()) %>%
+  arrange(species)
+
+# Step 3: Create a summary row for column totals
+column_totals <- gom.trials.summary %>%
+  summarise(across(all_of(year_cols), sum)) %>%
+  mutate(
+    species = "Total",
+    Total_Trials = sum(across(all_of(year_cols)))
+  ) %>%
+  select(names(gom.trials.summary))  # ensure column order matches
+
+# Step 4: Bind the summary row to the bottom
+gom.trials.summary <- bind_rows(gom.trials.summary, column_totals)
+
+# Step 5: Render with gt
+gt::gt(gom.trials.summary) %>%
+  tab_header(
+    title = "GoM Trial Summary by Species and Year Established",
+    subtitle = "Number of Trials per Species per Year"
+  ) %>%
+  fmt_number(decimals = 0) %>%
+  cols_label(
+    species = "Species",
+    Total_Trials = "Total Trials"
+  ) %>%
+  opt_align_table_header("left") %>% gtsave(filename = "./graphics/GoM_trial_summary_by_species_year2.png")
+
+fwrite(gom.trials.summary, "./clean_data/GoM_trial_summary_by_species_year.csv")
+```
+
+Assessed trial performance by year
+```{r}
+assessed <- fread( "./clean_data/GoM_assessed_trials_2023_24.csv")
+# Prepare data with counts and percentages
+performance_summary <- assessed %>% filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py")) %>% drop_na %>% 
+  count(species, performance, Planted_year) %>%
+  group_by(species, Planted_year) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  ungroup() %>%
+  mutate(performance = factor(performance,
+                              levels = c("Excellent", "Good", "Fair", "Poor", "Fail"),
+                              ordered = TRUE))
+
+# Stacked bar plot with counts and percentage labels
+ggplot(performance_summary, aes(x = species, y = n, fill = performance)) +
+  geom_bar(stat = "identity", position = "stack") +
+  geom_text(aes(label = paste0(round(percent), "%")),
+            position = position_stack(vjust = 0.5),
+            size = 3, color = "black") +
+  theme_minimal() +
+  labs(title = "Performance Distribution by Species in GoM Assessed Trials planted 2023-24",
+       x = "Species",
+       y = "Count of Trials",
+       fill = "Performance") +
+  scale_fill_manual(values = c("Excellent" = "darkgreen",
+                               "Good" = "lightgreen",
+                               "Fair" = "yellow",
+                               "Poor" = "orange",
+                               "Fail" = "red")) +
+  theme(legend.position = "top")+
+  facet_wrap(~Planted_year)
+
+ggsave("./graphics/GoM_assessed_trials_performance_2024_25.png", width = 10, height = 6)
+```
+
+Density graphic of species across climate space
+```{r}
+# Load and filter data
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv") %>%
+  filter(CoastInterior == "Interior", species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>%
+  distinct()#, "Bg""At", "Hw", 
+
+gom.climate <- fread("./clean_data/GoM_trial_climate.csv") %>%
+  filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw"))#,  "Bg""At", "Hw",
+
+WNA.climate <- fread("D:/OneDrive - Government of BC/CommonTables/BGC_climate/WNA_BGCv13_10km.csv") %>%
+  filter(!is.na(MAT), !is.na(MAP), !is.na(MSP), !is.na(MWMT), !is.na(CMD_an), !is.na(DD5_an))
+
+gom.assessed <- fread("./clean_data/GoM_assessed_climate.csv") %>%
+  filter(species %in% c("Fd", "Lw", "Py", "Pw", "Cw")) %>% #, "Bg""At", "Hw", 
+  mutate(performance = factor(performance, levels = c("Fail", "Poor", "Fair", "Good", "Excellent")))
+
+# Define performance levels and colors
+performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+performance_colors <- c(
+  "Fail" = "red",
+  "Poor" = "orange",
+  "Fair" = "yellow",
+  "Good" = "green",
+  "Excellent" = "purple")
+
+ggplot(tree.climate2, aes(x = MSP, y = MCMT)) +
+  # Background climate points (grey, no legend)
+  geom_point(data = gom.climate, aes(x = MSP, y = MCMT), color = "grey20", alpha = 0.3, size = 1) +
+
+  # Assessed trials with performance-based coloring
+  geom_point(
+    data = gom.assessed,
+    aes(x = MSP, y = MCMT, color = performance),
+    size = 1.5, shape = 17, alpha = 0.9
+  ) +
+
+  # Density shading
+  geom_hdr(data = tree.climate2, aes(x = MSP, y = MCMT)) +
+  geom_hdr_rug(data = tree.climate2, aes(x = MSP, y = MCMT), sides = "tr", outside = TRUE) +
+
+  # Manual color scale for performance
+  scale_color_manual(
+    values = performance_colors,
+    drop = FALSE,
+    guide = guide_legend(override.aes = list(shape = 17, size = 3))
+  ) +
+
+  # Optional: grayscale fill for density contours
+  #scale_fill_gradient(low = "grey90", high = "grey10") +
+
+  coord_cartesian(clip = "off") +
+  facet_wrap(~ species, ncol = 3) +
+  theme_minimal() +
+  labs(
+    title = "Species-Specific Density Across Climate Space",
+    subtitle = "Western North America",
+    x = "MSP", y = "MCMT"
+  )
+
+ggsave("./graphics/Species_Climate_Density_w_GoM.png", width = 8, height = 10)
+
+```
+
+
+```{r}
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+
+tree.climate2 <- fread("./clean_data/Tree_Plot_Climate.csv")
+tree.sf <- st_as_sf(tree.climate2, coords = c("Longitude", "Latitude"), crs = 4326) %>%
+  left_join(tree.codes, by = c("Species" = "Code"))
+
+gom.sf <- st_as_sf(gom.climate, coords = c("longitude", "latitude"), crs = 4326) %>%
+  filter(species %in% c("Cw", "Fd", "Lw", "Pw", "Py"))
+
+provmap <- st_read("D:/OneDrive - Government of BC/CommonTables/BC_AB_US_Shp/BC_Province_Outline_Dissolved.gpkg")
+
+gom.assessed <- fread("./clean_data/GoM_assessed_trials_2023_24.csv")
+gom.assessed.sf <- st_as_sf(gom.assessed, coords = c("Block_long", "Block_lat"), crs = 4326)
+
+# Define performance levels and colors
+performance_levels <- c("Fail", "Poor", "Fair", "Good", "Excellent")
+performance_colors <- c(
+  "Fail" = "red",
+  "Poor" = "orange",
+  "Fair" = "yellow",
+  "Good" = "green",
+  "Excellent" = "purple"
+)
+ sp = "Cw"
+for (sp in unique(gom.sf$species)) {
+  gom_data <- gom.sf %>% filter(species == sp)
+  tree_data <- tree.sf %>% filter(species == sp)
+  assessed_data <- gom.assessed.sf %>%
+    filter(species == sp) %>%
+    mutate(performance = factor(performance, levels = performance_levels))
+
+  # Apply jitter to assessed_data coordinates
+  jittered_coords <- st_coordinates(assessed_data) +
+    matrix(runif(nrow(assessed_data) * 2, -0.03, 0.03), ncol = 2)
+  assessed_data_jittered <- st_as_sf(
+    cbind(assessed_data, jittered_coords),
+    coords = c("X", "Y"),
+    crs = 4326
+  )
+
+  p <- ggplot() +
+    geom_sf(data = provmap, fill = "grey90", color = "black") +
+    geom_sf(data = tree_data, color = "grey50", size = 1, alpha = 0.8, shape = 1) +
+    geom_sf(data = gom_data, color = "grey20", size = 1, alpha = 0.8, shape = 15) +
+    geom_sf(data = assessed_data_jittered, aes(color = performance), size = 3, shape = 17, alpha = 0.9) +
+    scale_color_manual(values = performance_colors, drop = FALSE) +
+    coord_sf(xlim = st_bbox(provmap)[c("xmin", "xmax")],
+             ylim = st_bbox(provmap)[c("ymin", "ymax")],
+             expand = FALSE) +
+    theme_minimal()+
+    labs(
+      title = paste("Tree Plot Locations for", sp),
+      subtitle = "Species Distribution with Climate Data and Assessed Performance",
+      color = "Performance"
+    )
+
+  ggsave(filename = paste0("./graphics/map_", sp, ".png"), plot = p, width = 8, height = 6)
+}
+
+# 
+# tree_data <- tree.sf %>% filter(species == "Fd")
+# ggplot() +
+#     geom_sf(data = provmap, fill = "grey90", color = "black") +
+#     geom_sf(data = tree_data, color = "grey50", size = 1, alpha = 0.8, shape = 1) +
+#     #geom_sf(data = gom_data, color = "grey20", size = 2, alpha = 0.8, shape = 15) +
+#     #geom_sf(data = assessed_data_jittered, aes(color = performance), size = 3, shape = 17, alpha = 0.9) +
+#     #scale_color_manual(values = performance_colors, drop = FALSE) +
+#     coord_sf(xlim = st_bbox(provmap)[c("xmin", "xmax")],
+#              ylim = st_bbox(provmap)[c("ymin", "ymax")],
+#              expand = FALSE) +
+#     theme_minimal()+
+#     labs(
+#       title = paste("Tree Plot Locations for", sp),
+#       subtitle = "Species Distribution with Climate Data and Assessed Performance",
+#       color = "Performance"
+#     )
+```
+
+
+```{r}
+library(ggplot2)
+
+# Create a data frame of shape codes
+shape_df <- data.frame(
+  shape = 0:25,
+  x = rep(1:6, length.out = 26),
+  y = rep(5:1, each = 6, length.out = 26)
+)
+
+# Plot the shape codes
+ggplot(shape_df, aes(x = x, y = y)) +
+  geom_point(aes(shape = factor(shape)), size = 5, fill = "steelblue") +
+  geom_text(aes(label = shape), vjust = -1.5, size = 4) +
+  scale_shape_manual(values = shape_df$shape) +
+  theme_void() +
+  ggtitle("ggplot2 Shape Codes (0–25)")
+
+library(colorspace)
+
+# Choose a qualitative palette
+qualitative_hcl(5, palette = "Set 2")
+
+# Visualize multiple palettes
+hcl_palettes(plot = TRUE)
+
+# Interactive palette picker
+#choose_palette()  # Opens a GUI if you're in RStudio
+
+```
+
